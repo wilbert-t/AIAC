@@ -1,0 +1,6 @@
+feature,n_outliers,outlier_files
+mean_bond_length,14,"['71.xyz', '628.xyz', '99.xyz', '76.xyz', '537.xyz', '457.xyz', '899.xyz', '531.xyz', '530.xyz', '810.xyz', '557.xyz', '386.xyz', '96.xyz', '395.xyz']"
+mean_coordination,2,"['78.xyz', '635.xyz']"
+radius_of_gyration,34,"['158.xyz', '167.xyz', '413.xyz', '411.xyz', '388.xyz', '305.xyz', '317.xyz', '908.xyz', '682.xyz', '127.xyz', '125.xyz', '445.xyz', '651.xyz', '123.xyz', '22.xyz', '335.xyz', '527.xyz', '533.xyz', '391.xyz', '78.xyz', '437.xyz', '635.xyz', '185.xyz', '53.xyz', '344.xyz', '436.xyz', '234.xyz', '426.xyz', '42.xyz', '427.xyz', '586.xyz', '431.xyz', '800.xyz', '424.xyz']"
+asphericity,14,"['167.xyz', '822.xyz', '374.xyz', '388.xyz', '462.xyz', '682.xyz', '734.xyz', '445.xyz', '479.xyz', '22.xyz', '527.xyz', '533.xyz', '391.xyz', '53.xyz']"
+anisotropy,41,"['415.xyz', '762.xyz', '979.xyz', '211.xyz', '229.xyz', '188.xyz', '228.xyz', '404.xyz', '388.xyz', '648.xyz', '129.xyz', '317.xyz', '682.xyz', '654.xyz', '456.xyz', '125.xyz', '496.xyz', '535.xyz', '308.xyz', '877.xyz', '876.xyz', '309.xyz', '533.xyz', '391.xyz', '420.xyz', '421.xyz', '227.xyz', '757.xyz', '635.xyz', '634.xyz', '152.xyz', '191.xyz', '53.xyz', '977.xyz', '180.xyz', '341.xyz', '235.xyz', '590.xyz', '586.xyz', '633.xyz', '578.xyz']"
