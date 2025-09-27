@@ -1,0 +1,9 @@
+{
+  "surface_detection": "Using bulk_reference method",
+  "anisotropy": "Tensor-based (outlier resistant)",
+  "sphericity": "Volume-equivalent sphere ratio",
+  "rdf_features": "20 bins",
+  "soap_features": "15 PCA components",
+  "outlier_detection": "Multivariate (Mahalanobis + Isolation Forest)",
+  "feature_scaling": "Z-score standardization for correlations"
+}

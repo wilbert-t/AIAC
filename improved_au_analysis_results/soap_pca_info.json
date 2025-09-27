@@ -1,0 +1,21 @@
+{
+  "n_components": 15,
+  "explained_variance": 0.9524402410689602,
+  "component_names": [
+    "soap_pc_1",
+    "soap_pc_2",
+    "soap_pc_3",
+    "soap_pc_4",
+    "soap_pc_5",
+    "soap_pc_6",
+    "soap_pc_7",
+    "soap_pc_8",
+    "soap_pc_9",
+    "soap_pc_10",
+    "soap_pc_11",
+    "soap_pc_12",
+    "soap_pc_13",
+    "soap_pc_14",
+    "soap_pc_15"
+  ]
+}

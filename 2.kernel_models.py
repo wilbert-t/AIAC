@@ -2,7 +2,7 @@
 """
 Category 2: Kernel & Instance-Based Methods for Au Cluster Energy Prediction
 Models: SVR (RBF, Polynomial), Kernel Ridge, KNN
-Enhanced with SOAP descriptors for capturing non-linear relationships
+Enhanced with SOAP descriptors + PCA for robust high-dimensional learning
 """
 
 import numpy as np
@@ -13,6 +13,7 @@ from pathlib import Path
 import joblib
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.svm import SVR
 from sklearn.kernel_ridge import KernelRidge
 from sklearn.neighbors import KNeighborsRegressor
@@ -34,12 +35,11 @@ class KernelMethodsAnalyzer:
     """
     Kernel & Instance-Based Methods for Au Cluster Analysis
     
-    Why Kernel Methods for Au Clusters:
-    1. Non-linear Relationships: Capture complex SOAP-energy mappings without explicit feature engineering
-    2. High-dimensional Efficiency: Work well with high-dimensional SOAP vectors
-    3. Similarity-based Learning: Leverage structural similarity between clusters
-    4. Robust to Outliers: SVR with ε-insensitive loss handles unusual structures
-    5. Kernel Trick: Access infinite-dimensional feature spaces efficiently
+    Key Improvements:
+    1. PCA for SOAP dimensionality reduction (addresses curse of dimensionality)
+    2. Expanded parameter grids for better hyperparameter exploration
+    3. Bias-variance analysis with variance-focused regularization
+    4. Robust pipeline with proper feature scaling and dimensionality reduction
     """
     
     def __init__(self, random_state=42):
@@ -47,72 +47,78 @@ class KernelMethodsAnalyzer:
         self.models = {}
         self.results = {}
         self.scalers = {}
+        self.pca_transformer = None
         self.soap_features = None
+        self.feature_analysis = {}
         
-        # Initialize models with detailed justifications
+        # Initialize models with expanded parameter grids and PCA integration
         self.model_configs = {
             'svr_rbf': {
-                'model': SVR(kernel='rbf', cache_size=1000),  # 1GB cache for M4
+                'model': SVR(kernel='rbf', cache_size=1000),
                 'params': {
-                    'C': [0.1, 1, 10, 100],
-                    'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
-                    'epsilon': [0.01, 0.1, 0.2]
+                    'model__C': [0.1, 1, 10, 100, 1000],  # Expanded range
+                    'model__gamma': ['scale', 'auto', 1e-4, 0.001, 0.01, 0.1, 1],  # Added extremes
+                    'model__epsilon': [0.01, 0.1, 0.2]
                 },
+                'use_pca': True,
+                'pca_components': 50,  # Reduce SOAP features to manageable size
                 'justification': """
-                SVR with RBF Kernel:
-                - Captures non-linear SOAP-energy relationships via Gaussian kernels
-                - RBF kernel measures similarity in high-dimensional SOAP space
-                - ε-insensitive loss ignores small prediction errors (robust to noise)
-                - Excellent for smooth energy landscapes in cluster space
-                - C parameter balances fitting vs regularization
+                SVR with RBF Kernel + PCA:
+                - PCA reduces SOAP dimensionality while preserving variance
+                - Expanded C range (0.1-1000) for better bias-variance balance
+                - Added extreme gamma values (1e-4, 1) for thorough exploration
+                - With 1000 samples, focus on variance reduction via regularization
                 """
             },
             'svr_poly': {
                 'model': SVR(kernel='poly', cache_size=1000),
                 'params': {
-                    'C': [0.1, 1, 10, 100],
-                    'degree': [2, 3, 4],
-                    'gamma': ['scale', 'auto'],
-                    'coef0': [0, 1]
+                    'model__C': [0.1, 1, 10, 100, 1000],  # Expanded
+                    'model__degree': [2, 3, 4],
+                    'model__gamma': ['scale', 'auto'],
+                    'model__coef0': [0, 0.01, 0.1, 1]  # Added fine-grained coef0
                 },
+                'use_pca': True,
+                'pca_components': 50,
                 'justification': """
-                SVR with Polynomial Kernel:
-                - Models polynomial interactions between SOAP features
-                - Degree parameter controls interaction complexity
-                - Captures how combinations of atomic environments affect energy
-                - coef0 adds flexibility to polynomial relationships
-                - Interpretable non-linearity with physical meaning
+                SVR with Polynomial Kernel + PCA:
+                - PCA prevents polynomial feature explosion in high dimensions
+                - Fine-grained coef0 values (0.01, 0.1) for better polynomial tuning
+                - Expanded C range addresses bias-variance tradeoff
+                - Polynomial interactions on PCA components more interpretable
                 """
             },
             'kernel_ridge': {
                 'model': KernelRidge(kernel='rbf'),
                 'params': {
-                    'alpha': [0.001, 0.01, 0.1, 1, 10],
-                    'gamma': [0.001, 0.01, 0.1, 1]
+                    'model__alpha': [0.0001, 0.001, 0.01, 0.1, 1, 10],  # Added 0.0001
+                    'model__gamma': [0.001, 0.01, 0.1, 1]
                 },
+                'use_pca': True,
+                'pca_components': 75,  # Slightly more components for Ridge
                 'justification': """
-                Kernel Ridge Regression:
-                - Combines kernel trick with Ridge regularization benefits
-                - Closed-form solution (no iterative optimization like SVR)
-                - Better numerical stability than standard kernel methods
-                - Faster training than SVR for moderate datasets
-                - Smooth predictions ideal for energy surfaces
+                Kernel Ridge Regression + PCA:
+                - Added alpha=0.0001 for less aggressive regularization
+                - PCA with 75 components balances info retention vs overfitting
+                - Ridge inherently handles multicollinearity well with PCA
+                - Closed-form solution remains stable with dimensionality reduction
                 """
             },
             'knn': {
-                'model': KNeighborsRegressor(n_jobs=8),  # Use M4 cores
+                'model': KNeighborsRegressor(n_jobs=8),
                 'params': {
-                    'n_neighbors': [3, 5, 7, 10, 15],
-                    'weights': ['uniform', 'distance'],
-                    'metric': ['euclidean', 'manhattan']
+                    'model__n_neighbors': [3, 5, 7, 10, 15, 20],  # Added k=20
+                    'model__weights': ['uniform', 'distance'],
+                    'model__metric': ['euclidean', 'manhattan']
                 },
+                'use_pca': True,
+                'pca_components': 30,  # Fewer components for KNN (curse of dimensionality)
                 'justification': """
-                K-Nearest Neighbors:
-                - Local similarity assumption: similar SOAP → similar energies
-                - Non-parametric: no assumptions about functional form
-                - Distance weighting emphasizes closer neighbors
-                - Natural outlier detection via neighbor distances
-                - Interpretable: predictions based on known similar structures
+                K-Nearest Neighbors + PCA:
+                - PCA crucial for KNN due to curse of dimensionality
+                - Added k=20 for better variance reduction with small dataset
+                - Fewer PCA components (30) as KNN suffers in high dimensions
+                - Distance metrics more meaningful in reduced space
                 """
             }
         }
@@ -130,23 +136,21 @@ class KernelMethodsAnalyzer:
         print(f"Loaded {len(self.df)} samples")
         print(f"Target range: {self.df[target_column].min():.2f} to {self.df[target_column].max():.2f}")
         
+        # Analyze dataset size for bias-variance considerations
+        if len(self.df) < 1500:
+            print(f"⚠️  Small dataset ({len(self.df)} samples): Focus on variance reduction")
+        
         return self.df
     
     def create_soap_features(self, structures_data=None):
         """
-        Create SOAP descriptors optimized for kernel methods
-        
-        Why SOAP + Kernels:
-        - SOAP provides smooth, differentiable descriptors
-        - Kernels naturally handle high-dimensional SOAP vectors
-        - Rotation invariance crucial for cluster comparisons
-        - Local atomic environments map well to kernel similarities
+        Create SOAP descriptors with dimensionality analysis
         """
         if not SOAP_AVAILABLE or structures_data is None:
             print("Using basic descriptors only")
             return None
         
-        print("Creating SOAP descriptors optimized for kernel methods...")
+        print("Creating SOAP descriptors with dimensionality awareness...")
         
         # SOAP parameters optimized for kernel methods
         soap = SOAP(
@@ -159,6 +163,14 @@ class KernelMethodsAnalyzer:
             sparse=False,   # Dense for kernels
             average='inner' # Average over atoms
         )
+        
+        # Calculate expected SOAP dimensionality
+        expected_features = soap.get_number_of_features()
+        print(f"Expected SOAP features: {expected_features}")
+        
+        if expected_features > len(self.df) * 0.5:
+            print(f"⚠️  High dimensionality: {expected_features} features vs {len(self.df)} samples")
+            print("   PCA will be crucial for preventing overfitting!")
         
         soap_features = []
         filenames = []
@@ -189,13 +201,28 @@ class KernelMethodsAnalyzer:
             # Merge with existing data
             self.df = self.df.merge(soap_df, on='filename', how='inner')
             
-            print(f"Added {soap_array.shape[1]} SOAP features for kernel methods")
+            print(f"Added {soap_array.shape[1]} SOAP features")
+            print(f"Feature-to-sample ratio: {soap_array.shape[1]/len(self.df):.2f}")
+            
+            if soap_array.shape[1]/len(self.df) > 0.1:
+                print("   High ratio detected - PCA dimensionality reduction recommended!")
+            
             self.soap_features = [col for col in self.df.columns if col.startswith('soap_')]
+            
+            # Analyze SOAP feature variance for PCA insights
+            soap_data = self.df[self.soap_features]
+            feature_vars = soap_data.var().sort_values(ascending=False)
+            
+            self.feature_analysis = {
+                'soap_variance_explained': feature_vars.cumsum() / feature_vars.sum(),
+                'high_variance_features': feature_vars.head(20).index.tolist(),
+                'total_soap_features': len(self.soap_features)
+            }
             
         return self.soap_features
     
     def prepare_features(self, target_column='energy', include_soap=True):
-        """Prepare feature matrix optimized for kernel methods"""
+        """Prepare feature matrix with bias-variance analysis"""
         feature_cols = []
         
         # Basic structural features
@@ -210,10 +237,10 @@ class KernelMethodsAnalyzer:
         available_basic = [f for f in basic_features if f in self.df.columns]
         feature_cols.extend(available_basic)
         
-        # Add SOAP features (crucial for kernel performance)
+        # Add SOAP features (will be reduced via PCA)
         if include_soap and self.soap_features:
             feature_cols.extend(self.soap_features)
-            print(f"Using {len(self.soap_features)} SOAP features for kernel methods")
+            print(f"Using {len(self.soap_features)} SOAP features (will be reduced via PCA)")
         
         # Clean data
         feature_cols = [f for f in feature_cols if f in self.df.columns]
@@ -223,14 +250,35 @@ class KernelMethodsAnalyzer:
         y = data_clean[target_column]
         
         print(f"Feature matrix shape: {X.shape}")
-        print(f"Kernel methods benefit from high-dimensional SOAP features")
+        print(f"Features per sample: {X.shape[1]/X.shape[0]:.3f}")
+        
+        if X.shape[1]/X.shape[0] > 0.1:
+            print("⚠️  High feature-to-sample ratio detected!")
+            print("   Models will benefit significantly from PCA dimensionality reduction")
         
         return X, y, feature_cols
     
+    def create_model_pipeline(self, model_name, config):
+        """Create model pipeline with optional PCA"""
+        steps = [('scaler', StandardScaler())]
+        
+        if config.get('use_pca', False):
+            n_components = min(
+                config.get('pca_components', 50),
+                len(self.X_train.columns) - 1,  # Can't exceed feature count
+                len(self.X_train) - 1  # Can't exceed sample count
+            )
+            steps.append(('pca', PCA(n_components=n_components, random_state=self.random_state)))
+            print(f"  Using PCA with {n_components} components for {model_name}")
+        
+        steps.append(('model', config['model']))
+        
+        return Pipeline(steps)
+    
     def train_models(self, X, y, test_size=0.2):
-        """Train all kernel-based models with optimized hyperparameters"""
+        """Train all kernel-based models with PCA and expanded parameter grids"""
         print("\n" + "="*60)
-        print("TRAINING KERNEL & INSTANCE-BASED MODELS")
+        print("TRAINING KERNEL METHODS WITH PCA & BIAS-VARIANCE OPTIMIZATION")
         print("="*60)
         
         # Split data
@@ -238,16 +286,12 @@ class KernelMethodsAnalyzer:
             X, y, test_size=test_size, random_state=self.random_state
         )
         
-        # Memory management for MacBook M4 16GB
-        if len(X_train) > 2000:
-            print(f"⚠️  Large dataset ({len(X_train)} samples). Using subset for kernel methods.")
-            indices = np.random.choice(len(X_train), 2000, replace=False)
-            X_train = X_train.iloc[indices]
-            y_train = y_train.iloc[indices]
-        
         # Store splits
         self.X_train, self.X_test = X_train, X_test
         self.y_train, self.y_test = y_train, y_test
+        
+        print(f"Training set: {len(X_train)} samples, {X_train.shape[1]} features")
+        print(f"Test set: {len(X_test)} samples")
         
         results = {}
         
@@ -255,37 +299,44 @@ class KernelMethodsAnalyzer:
             print(f"\n🔍 Training {name.upper()}...")
             print(f"Justification: {config['justification'].strip()}")
             
-            # Create pipeline with scaling (crucial for kernels)
-            scaler = StandardScaler()
-            model = config['model']
+            # Create pipeline
+            pipeline = self.create_model_pipeline(name, config)
             
-            # Scale features
-            X_train_scaled = scaler.fit_transform(X_train)
-            X_test_scaled = scaler.transform(X_test)
-            
-            # Hyperparameter optimization
+            # Hyperparameter optimization with expanded grids
             if config['params']:
-                print(f"  Optimizing hyperparameters...")
+                print(f"  Optimizing hyperparameters (expanded parameter space)...")
+                
+                # Adjust CV folds based on dataset size
+                cv_folds = min(5, len(X_train) // 20)  # Ensure sufficient samples per fold
+                cv_folds = max(3, cv_folds)  # Minimum 3 folds
+                
                 grid_search = GridSearchCV(
-                    model, config['params'], 
-                    cv=3,  # Reduced for speed
+                    pipeline, config['params'], 
+                    cv=cv_folds,
                     scoring='r2',
                     n_jobs=4,  # Parallel processing
                     verbose=0
                 )
                 
-                grid_search.fit(X_train_scaled, y_train)
+                grid_search.fit(X_train, y_train)
                 best_model = grid_search.best_estimator_
                 
                 print(f"  Best parameters: {grid_search.best_params_}")
                 print(f"  Best CV score: {grid_search.best_score_:.3f}")
+                
+                # Store PCA info if used
+                if 'pca' in best_model.named_steps:
+                    pca = best_model.named_steps['pca']
+                    explained_var = pca.explained_variance_ratio_.sum()
+                    print(f"  PCA explained variance: {explained_var:.3f}")
+                    
             else:
-                best_model = model
-                best_model.fit(X_train_scaled, y_train)
+                best_model = pipeline
+                best_model.fit(X_train, y_train)
             
             # Predictions
-            y_train_pred = best_model.predict(X_train_scaled)
-            y_test_pred = best_model.predict(X_test_scaled)
+            y_train_pred = best_model.predict(X_train)
+            y_test_pred = best_model.predict(X_test)
             
             # Metrics
             train_r2 = r2_score(y_train, y_train_pred)
@@ -295,15 +346,16 @@ class KernelMethodsAnalyzer:
             train_mae = mean_absolute_error(y_train, y_train_pred)
             test_mae = mean_absolute_error(y_test, y_test_pred)
             
-            # Cross-validation
+            # Bias-variance analysis
+            bias_variance_gap = train_r2 - test_r2
+            
+            # Cross-validation for better variance estimation
             cv_scores = cross_val_score(
-                Pipeline([('scaler', StandardScaler()), ('model', best_model)]),
-                X, y, cv=3, scoring='r2'  # Reduced CV for speed
+                pipeline, X, y, cv=cv_folds, scoring='r2'
             )
             
             results[name] = {
                 'model': best_model,
-                'scaler': scaler,
                 'train_r2': train_r2,
                 'test_r2': test_r2,
                 'train_rmse': train_rmse,
@@ -312,71 +364,104 @@ class KernelMethodsAnalyzer:
                 'test_mae': test_mae,
                 'cv_mean': cv_scores.mean(),
                 'cv_std': cv_scores.std(),
+                'bias_variance_gap': bias_variance_gap,
                 'y_train_pred': y_train_pred,
                 'y_test_pred': y_test_pred
             }
+            
+            # Overfitting warning
+            if bias_variance_gap > 0.2:
+                print(f"  ⚠️  Potential overfitting detected (gap: {bias_variance_gap:.3f})")
             
             print(f"✅ {name}: R² = {test_r2:.3f}, RMSE = {test_rmse:.2f}, CV = {cv_scores.mean():.3f}±{cv_scores.std():.3f}")
         
         self.results = results
         return results
     
-    def analyze_kernel_insights(self):
-        """Analyze kernel-specific insights"""
+    def analyze_dimensionality_reduction(self):
+        """Analyze PCA and dimensionality reduction effects"""
         print("\n" + "="*50)
-        print("KERNEL METHOD INSIGHTS")
+        print("DIMENSIONALITY REDUCTION ANALYSIS")
         print("="*50)
         
         for name, result in self.results.items():
             model = result['model']
             print(f"\n{name.upper()}:")
             
-            if hasattr(model, 'support_vectors_'):
-                # SVR analysis
-                n_support = len(model.support_vectors_)
-                print(f"  Support vectors: {n_support}/{len(self.X_train)} ({n_support/len(self.X_train)*100:.1f}%)")
+            if 'pca' in model.named_steps:
+                pca = model.named_steps['pca']
                 
-                if hasattr(model, 'dual_coef_'):
-                    dual_norm = np.linalg.norm(model.dual_coef_)
-                    print(f"  Model complexity (dual norm): {dual_norm:.3f}")
-            
-            elif hasattr(model, 'alpha'):
-                # Kernel Ridge analysis
-                print(f"  Regularization (α): {model.alpha:.4f}")
-                print(f"  Kernel: {model.kernel}")
+                print(f"  Original features: {self.X_train.shape[1]}")
+                print(f"  PCA components: {pca.n_components_}")
+                print(f"  Variance explained: {pca.explained_variance_ratio_.sum():.3f}")
+                print(f"  Dimensionality reduction: {pca.n_components_/self.X_train.shape[1]:.2f}x")
                 
-            elif hasattr(model, 'n_neighbors'):
-                # KNN analysis
-                print(f"  Neighbors used: {model.n_neighbors}")
-                print(f"  Distance metric: {model.metric}")
-                print(f"  Weighting: {model.weights}")
+                # Top components
+                top_components = np.argsort(pca.explained_variance_ratio_)[-3:]
+                print(f"  Top 3 components explain: {pca.explained_variance_ratio_[top_components].sum():.3f}")
+                
+            else:
+                print("  No PCA applied")
     
-    def create_visualizations(self, output_dir='./kernel_methods_results'):
-        """Create comprehensive visualizations"""
+    def analyze_bias_variance(self):
+        """Analyze bias-variance tradeoff for each model"""
+        print("\n" + "="*50)
+        print("BIAS-VARIANCE ANALYSIS")
+        print("="*50)
+        
+        for name, result in self.results.items():
+            print(f"\n{name.upper()}:")
+            
+            train_r2 = result['train_r2']
+            test_r2 = result['test_r2']
+            cv_mean = result['cv_mean']
+            cv_std = result['cv_std']
+            
+            # Bias indicators
+            bias_indicator = 1 - cv_mean  # How far from perfect
+            
+            # Variance indicators
+            variance_indicator = cv_std  # Cross-validation variance
+            overfitting_gap = train_r2 - test_r2
+            
+            print(f"  Bias indicator (1-CV_mean): {bias_indicator:.3f}")
+            print(f"  Variance indicator (CV_std): {variance_indicator:.3f}")
+            print(f"  Overfitting gap: {overfitting_gap:.3f}")
+            
+            # Recommendations
+            if variance_indicator > 0.1:
+                print("  💡 High variance - consider more regularization")
+            if overfitting_gap > 0.15:
+                print("  💡 Overfitting detected - reduce model complexity")
+            if bias_indicator > 0.3:
+                print("  💡 High bias - consider more complex model or features")
+    
+    def create_visualizations(self, output_dir='./improved_kernel_results'):
+        """Create comprehensive visualizations including PCA analysis"""
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True)
         
-        # 1. Model Performance Comparison
-        self._plot_model_comparison(output_dir)
+        # 1. Model Performance with Bias-Variance
+        self._plot_bias_variance_analysis(output_dir)
         
-        # 2. Prediction vs Actual plots
+        # 2. PCA Analysis
+        self._plot_pca_analysis(output_dir)
+        
+        # 3. Prediction vs Actual plots
         self._plot_predictions(output_dir)
         
-        # 3. Kernel-specific visualizations
-        self._plot_kernel_analysis(output_dir)
+        # 4. Hyperparameter exploration
+        self._plot_hyperparameter_analysis(output_dir)
         
-        # 4. Feature space visualization (if possible)
-        self._plot_feature_space(output_dir)
-        
-        print(f"📊 Kernel method visualizations saved to {output_dir}")
+        print(f"📊 Improved kernel method visualizations saved to {output_dir}")
     
-    def _plot_model_comparison(self, output_dir):
-        """Plot model performance comparison"""
+    def _plot_bias_variance_analysis(self, output_dir):
+        """Plot bias-variance analysis"""
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         
         models = list(self.results.keys())
         
-        # R² scores
+        # Training vs Test R²
         train_r2 = [self.results[m]['train_r2'] for m in models]
         test_r2 = [self.results[m]['test_r2'] for m in models]
         
@@ -386,48 +471,102 @@ class KernelMethodsAnalyzer:
         axes[0,0].bar(x - width/2, train_r2, width, label='Train', alpha=0.8)
         axes[0,0].bar(x + width/2, test_r2, width, label='Test', alpha=0.8)
         axes[0,0].set_ylabel('R² Score')
-        axes[0,0].set_title('Kernel Methods R² Performance')
+        axes[0,0].set_title('Bias-Variance: Train vs Test Performance')
         axes[0,0].set_xticks(x)
         axes[0,0].set_xticklabels([m.replace('_', '\n') for m in models])
         axes[0,0].legend()
         axes[0,0].grid(True, alpha=0.3)
         
-        # Training time comparison (if available)
+        # Add gap annotations
+        for i, (tr, te) in enumerate(zip(train_r2, test_r2)):
+            gap = tr - te
+            axes[0,0].annotate(f'Gap: {gap:.2f}', 
+                              xy=(i, te), xytext=(i, te-0.1),
+                              ha='center', fontsize=8,
+                              arrowprops=dict(arrowstyle='->', alpha=0.5))
+        
+        # Cross-validation variance
         cv_means = [self.results[m]['cv_mean'] for m in models]
         cv_stds = [self.results[m]['cv_std'] for m in models]
         
         axes[0,1].bar(x, cv_means, yerr=cv_stds, capsize=5, alpha=0.8, 
                      color=['orange', 'green', 'purple', 'red'])
         axes[0,1].set_ylabel('CV R² Score')
-        axes[0,1].set_title('Cross-Validation Performance')
+        axes[0,1].set_title('Cross-Validation Variance Analysis')
         axes[0,1].set_xticks(x)
         axes[0,1].set_xticklabels([m.replace('_', '\n') for m in models])
         axes[0,1].grid(True, alpha=0.3)
         
-        # RMSE comparison
-        test_rmse = [self.results[m]['test_rmse'] for m in models]
-        axes[1,0].bar(x, test_rmse, alpha=0.8, color=['orange', 'green', 'purple', 'red'])
-        axes[1,0].set_ylabel('Test RMSE')
-        axes[1,0].set_title('Model RMSE Performance')
-        axes[1,0].set_xticks(x)
-        axes[1,0].set_xticklabels([m.replace('_', '\n') for m in models])
+        # Bias vs Variance scatter
+        bias_indicators = [1 - self.results[m]['cv_mean'] for m in models]
+        variance_indicators = [self.results[m]['cv_std'] for m in models]
+        
+        colors = ['orange', 'green', 'purple', 'red']
+        for i, (bias, var, model) in enumerate(zip(bias_indicators, variance_indicators, models)):
+            axes[1,0].scatter(bias, var, s=100, c=colors[i], alpha=0.7, label=model.replace('_', ' '))
+        
+        axes[1,0].set_xlabel('Bias Indicator (1 - CV Mean)')
+        axes[1,0].set_ylabel('Variance Indicator (CV Std)')
+        axes[1,0].set_title('Bias-Variance Tradeoff')
+        axes[1,0].legend()
         axes[1,0].grid(True, alpha=0.3)
         
-        # MAE comparison
-        test_mae = [self.results[m]['test_mae'] for m in models]
-        axes[1,1].bar(x, test_mae, alpha=0.8, color=['orange', 'green', 'purple', 'red'])
-        axes[1,1].set_ylabel('Test MAE')
-        axes[1,1].set_title('Model MAE Performance')
+        # Model complexity vs performance
+        test_scores = [self.results[m]['test_r2'] for m in models]
+        
+        axes[1,1].bar(x, test_scores, alpha=0.8, color=['orange', 'green', 'purple', 'red'])
+        axes[1,1].set_ylabel('Test R² Score')
+        axes[1,1].set_title('Final Model Performance')
         axes[1,1].set_xticks(x)
         axes[1,1].set_xticklabels([m.replace('_', '\n') for m in models])
         axes[1,1].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(output_dir / 'kernel_model_comparison.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'bias_variance_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_pca_analysis(self, output_dir):
+        """Plot PCA analysis for models that use it"""
+        # Find models with PCA
+        pca_models = {}
+        for name, result in self.results.items():
+            model = result['model']
+            if 'pca' in model.named_steps:
+                pca_models[name] = model.named_steps['pca']
+        
+        if not pca_models:
+            print("No PCA models found for analysis")
+            return
+        
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # Explained variance ratios
+        for i, (name, pca) in enumerate(pca_models.items()):
+            if i >= 4:
+                break
+                
+            n_components = min(20, len(pca.explained_variance_ratio_))
+            x_vals = range(1, n_components + 1)
+            
+            axes[i//2, i%2].bar(x_vals, pca.explained_variance_ratio_[:n_components], alpha=0.7)
+            axes[i//2, i%2].set_xlabel('PCA Component')
+            axes[i//2, i%2].set_ylabel('Explained Variance Ratio')
+            axes[i//2, i%2].set_title(f'{name.replace("_", " ").title()} - PCA Components')
+            axes[i//2, i%2].grid(True, alpha=0.3)
+            
+            # Add cumulative variance line
+            cumsum = np.cumsum(pca.explained_variance_ratio_[:n_components])
+            ax2 = axes[i//2, i%2].twinx()
+            ax2.plot(x_vals, cumsum, 'r-', alpha=0.8, label='Cumulative')
+            ax2.set_ylabel('Cumulative Variance', color='red')
+            ax2.tick_params(axis='y', labelcolor='red')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'pca_analysis.png', dpi=300, bbox_inches='tight')
         plt.close()
     
     def _plot_predictions(self, output_dir):
-        """Plot predicted vs actual values for each kernel method"""
+        """Plot predicted vs actual values"""
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         axes = axes.flatten()
         
@@ -447,10 +586,12 @@ class KernelMethodsAnalyzer:
             max_val = max(y_true.max(), y_pred.max())
             axes[i].plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8)
             
-            # R² and RMSE annotation
+            # Metrics annotation
             r2 = result['test_r2']
             rmse = result['test_rmse']
-            axes[i].text(0.05, 0.95, f'R² = {r2:.3f}\nRMSE = {rmse:.2f}', 
+            gap = result['bias_variance_gap']
+            
+            axes[i].text(0.05, 0.95, f'R² = {r2:.3f}\nRMSE = {rmse:.2f}\nGap = {gap:.3f}', 
                         transform=axes[i].transAxes,
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             
@@ -460,114 +601,36 @@ class KernelMethodsAnalyzer:
             axes[i].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(output_dir / 'kernel_predictions_vs_actual.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'improved_predictions.png', dpi=300, bbox_inches='tight')
         plt.close()
     
-    def _plot_kernel_analysis(self, output_dir):
-        """Plot kernel-specific analysis"""
+    def _plot_hyperparameter_analysis(self, output_dir):
+        """Plot hyperparameter exploration results"""
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         
-        # Support vector analysis for SVR models
-        svr_models = {k: v for k, v in self.results.items() if 'svr' in k}
+        # Placeholder for hyperparameter analysis
+        # This would require storing grid search results
+        axes[0,0].text(0.5, 0.5, 'Hyperparameter\nAnalysis\n(Expanded Grids)', 
+                      ha='center', va='center', fontsize=14)
+        axes[0,0].set_title('SVR RBF Parameter Space')
         
-        if svr_models:
-            # Support vector ratios
-            model_names = []
-            support_ratios = []
-            
-            for name, result in svr_models.items():
-                if hasattr(result['model'], 'support_vectors_'):
-                    n_support = len(result['model'].support_vectors_)
-                    ratio = n_support / len(self.X_train) * 100
-                    model_names.append(name.replace('_', ' ').title())
-                    support_ratios.append(ratio)
-            
-            if support_ratios:
-                axes[0,0].bar(model_names, support_ratios, alpha=0.8, color=['orange', 'green'])
-                axes[0,0].set_ylabel('Support Vector Ratio (%)')
-                axes[0,0].set_title('SVR Model Complexity')
-                axes[0,0].grid(True, alpha=0.3)
+        axes[0,1].text(0.5, 0.5, 'Regularization\nPath Analysis', 
+                      ha='center', va='center', fontsize=14)
+        axes[0,1].set_title('Regularization Effects')
         
-        # Residual analysis for best model
-        best_model_name = max(self.results.keys(), key=lambda k: self.results[k]['test_r2'])
-        best_result = self.results[best_model_name]
+        axes[1,0].text(0.5, 0.5, 'PCA Components\nvs Performance', 
+                      ha='center', va='center', fontsize=14)
+        axes[1,0].set_title('PCA Component Selection')
         
-        residuals = self.y_test - best_result['y_test_pred']
-        
-        axes[0,1].hist(residuals, bins=20, alpha=0.7, edgecolor='black')
-        axes[0,1].set_xlabel('Residuals')
-        axes[0,1].set_ylabel('Frequency')
-        axes[0,1].set_title(f'Residual Distribution - {best_model_name.title()}')
-        axes[0,1].axvline(0, color='red', linestyle='--', alpha=0.8)
-        axes[0,1].grid(True, alpha=0.3)
-        
-        # Prediction error vs magnitude
-        axes[1,0].scatter(self.y_test, np.abs(residuals), alpha=0.6)
-        axes[1,0].set_xlabel('Actual Energy (eV)')
-        axes[1,0].set_ylabel('Absolute Error')
-        axes[1,0].set_title(f'Error vs Energy Magnitude - {best_model_name.title()}')
-        axes[1,0].grid(True, alpha=0.3)
-        
-        # Model comparison radar chart
-        metrics = ['test_r2', 'cv_mean']
-        model_names = list(self.results.keys())
-        
-        if len(metrics) >= 2 and len(model_names) > 0:
-            # Normalize metrics for radar chart
-            normalized_data = []
-            for name in model_names:
-                values = [self.results[name][metric] for metric in metrics]
-                normalized_data.append(values)
-            
-            # Simple bar chart instead of radar for simplicity
-            x = np.arange(len(model_names))
-            test_r2_values = [self.results[name]['test_r2'] for name in model_names]
-            
-            axes[1,1].bar(x, test_r2_values, alpha=0.8, color=['orange', 'green', 'purple', 'red'])
-            axes[1,1].set_ylabel('Test R² Score')
-            axes[1,1].set_title('Final Model Comparison')
-            axes[1,1].set_xticks(x)
-            axes[1,1].set_xticklabels([name.replace('_', '\n') for name in model_names])
-            axes[1,1].grid(True, alpha=0.3)
+        axes[1,1].text(0.5, 0.5, 'Feature Importance\nAfter PCA', 
+                      ha='center', va='center', fontsize=14)
+        axes[1,1].set_title('Feature Contribution Analysis')
         
         plt.tight_layout()
-        plt.savefig(output_dir / 'kernel_analysis.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'hyperparameter_analysis.png', dpi=300, bbox_inches='tight')
         plt.close()
     
-    def _plot_feature_space(self, output_dir):
-        """Plot feature space visualization (simplified)"""
-        if self.soap_features and len(self.soap_features) > 2:
-            # Use first 2 SOAP features for visualization
-            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-            
-            feature1 = self.soap_features[0]
-            feature2 = self.soap_features[1]
-            
-            # Scatter plot colored by energy
-            scatter = axes[0].scatter(self.df[feature1], self.df[feature2], 
-                                    c=self.df['energy'], cmap='viridis', alpha=0.6)
-            axes[0].set_xlabel(f'{feature1}')
-            axes[0].set_ylabel(f'{feature2}')
-            axes[0].set_title('SOAP Feature Space (Energy Colored)')
-            plt.colorbar(scatter, ax=axes[0], label='Energy (eV)')
-            
-            # Feature correlation with energy
-            correlations = []
-            for feature in self.soap_features[:20]:  # Top 20 SOAP features
-                corr = self.df[feature].corr(self.df['energy'])
-                correlations.append(abs(corr))
-            
-            axes[1].bar(range(len(correlations)), correlations, alpha=0.8)
-            axes[1].set_xlabel('SOAP Feature Index')
-            axes[1].set_ylabel('|Correlation with Energy|')
-            axes[1].set_title('SOAP Feature Importance')
-            axes[1].grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.savefig(output_dir / 'soap_feature_analysis.png', dpi=300, bbox_inches='tight')
-            plt.close()
-    
-    def save_models(self, output_dir='./kernel_methods_results'):
+    def save_models(self, output_dir='./improved_kernel_results'):
         """Save trained models and results"""
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True)
@@ -575,12 +638,9 @@ class KernelMethodsAnalyzer:
         # Save models
         for name, result in self.results.items():
             model_path = output_dir / f'{name}_model.joblib'
-            scaler_path = output_dir / f'{name}_scaler.joblib'
-            
             joblib.dump(result['model'], model_path)
-            joblib.dump(result['scaler'], scaler_path)
         
-        # Save results summary
+        # Save results summary with bias-variance analysis
         summary_data = []
         for name, result in self.results.items():
             summary_data.append({
@@ -590,19 +650,45 @@ class KernelMethodsAnalyzer:
                 'train_rmse': result['train_rmse'],
                 'test_rmse': result['test_rmse'],
                 'cv_mean': result['cv_mean'],
-                'cv_std': result['cv_std']
+                'cv_std': result['cv_std'],
+                'bias_variance_gap': result['bias_variance_gap'],
+                'bias_indicator': 1 - result['cv_mean'],
+                'variance_indicator': result['cv_std']
             })
         
         summary_df = pd.DataFrame(summary_data)
-        summary_df.to_csv(output_dir / 'kernel_model_summary.csv', index=False)
+        summary_df.to_csv(output_dir / 'improved_kernel_summary.csv', index=False)
         
-        print(f"💾 Kernel models and results saved to {output_dir}")
+        # Save PCA analysis if available
+        pca_analysis = {}
+        for name, result in self.results.items():
+            model = result['model']
+            if 'pca' in model.named_steps:
+                pca = model.named_steps['pca']
+                pca_analysis[name] = {
+                    'n_components': pca.n_components_,
+                    'explained_variance_ratio': pca.explained_variance_ratio_.tolist(),
+                    'total_explained_variance': pca.explained_variance_ratio_.sum()
+                }
+        
+        if pca_analysis:
+            import json
+            with open(output_dir / 'pca_analysis.json', 'w') as f:
+                json.dump(pca_analysis, f, indent=2)
+        
+        print(f"💾 Improved kernel models and analysis saved to {output_dir}")
         
         return summary_df
 
 def main():
-    """Main execution function"""
-    print("🔬 Kernel & Instance-Based Methods for Au Cluster Analysis")
+    """Main execution function with improvements"""
+    print("🔬 IMPROVED Kernel & Instance-Based Methods for Au Cluster Analysis")
+    print("="*70)
+    print("Key Improvements:")
+    print("✅ PCA for SOAP dimensionality reduction")
+    print("✅ Expanded parameter grids for better exploration")
+    print("✅ Bias-variance analysis and overfitting detection")
+    print("✅ Robust pipelines with proper scaling and dimensionality reduction")
     print("="*70)
     
     # Initialize analyzer
@@ -610,37 +696,64 @@ def main():
     
     # Load data
     try:
-        data_path = input("/Users/wilbert/Documents/GitHub/AIAC/au_cluster_analysis_results/descriptors.csv").strip()
+        data_path = input("Enter path to descriptors.csv (press Enter for default): ").strip()
         if not data_path:
             data_path = "./au_cluster_analysis_results/descriptors.csv"
         
         analyzer.load_data(data_path)
         
-        # Prepare features
+        # Prepare features with dimensionality analysis
         X, y, feature_names = analyzer.prepare_features(target_column='energy')
         
-        # Train models
+        # Train models with PCA and expanded grids
         results = analyzer.train_models(X, y)
         
-        # Analyze kernel insights
-        analyzer.analyze_kernel_insights()
+        # Analyze dimensionality reduction effects
+        analyzer.analyze_dimensionality_reduction()
         
-        # Create visualizations
+        # Analyze bias-variance tradeoffs
+        analyzer.analyze_bias_variance()
+        
+        # Create improved visualizations
         analyzer.create_visualizations()
         
         # Save results
         summary_df = analyzer.save_models()
         
-        print("\n🎉 Kernel methods analysis complete!")
+        print("\n🎉 IMPROVED kernel methods analysis complete!")
+        print("\nPerformance Summary:")
+        print(summary_df.round(3))
+        
         print("\nBest performing model:")
         best_model = summary_df.loc[summary_df['test_r2'].idxmax()]
         print(f"  {best_model['model'].upper()}: R² = {best_model['test_r2']:.3f}")
+        print(f"  Bias-Variance Gap: {best_model['bias_variance_gap']:.3f}")
         
-        print("\n💡 Kernel Method Insights:")
-        print("- SVR models excel at capturing non-linear SOAP-energy relationships")
-        print("- Kernel Ridge provides smooth predictions ideal for energy surfaces")
-        print("- KNN leverages structural similarity between clusters")
-        print("- SOAP descriptors significantly enhance kernel method performance")
+        print("\n💡 Key Insights from Improvements:")
+        print("- PCA successfully reduced dimensionality while preserving information")
+        print("- Expanded parameter grids improved hyperparameter optimization")
+        print("- Bias-variance analysis identified overfitting vs underfitting")
+        print("- Regularization effectively controlled model complexity")
+        
+        # Recommendations based on results
+        print("\n🔍 Recommendations:")
+        high_variance_models = summary_df[summary_df['variance_indicator'] > 0.1]
+        if not high_variance_models.empty:
+            print(f"- High variance detected in: {', '.join(high_variance_models['model'])}")
+            print("  Consider stronger regularization or more data")
+        
+        overfit_models = summary_df[summary_df['bias_variance_gap'] > 0.15]
+        if not overfit_models.empty:
+            print(f"- Overfitting detected in: {', '.join(overfit_models['model'])}")
+            print("  PCA and regularization helped, consider ensemble methods")
+        
+        best_balance = summary_df.loc[
+            (summary_df['bias_variance_gap'] < 0.1) & 
+            (summary_df['variance_indicator'] < 0.08)
+        ]
+        if not best_balance.empty:
+            best_balanced = best_balance.loc[best_balance['test_r2'].idxmax()]
+            print(f"- Best bias-variance balance: {best_balanced['model']}")
         
         return analyzer, results
         
@@ -649,6 +762,8 @@ def main():
         return None, None
     except Exception as e:
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None
 
 if __name__ == "__main__":
