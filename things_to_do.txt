@@ -1,0 +1,35 @@
+1. ensamble methods change cannot into csv file into it Category 6: Hybrid & Advanced Ensembles (Mixed Framework)
+6.1 Stacking Ensemble
+Why use:
+•	Model complementarity: Combines different algorithmic strengths
+•	Meta-learning: Learns optimal combination of base model predictions
+•	Reduced overfitting: Meta-learner prevents over-reliance on single models
+•	Performance ceiling: Often achieves best possible performance
+•	Error analysis: Identifies where different models excel
+Au cluster specific: XGBoost (patterns) + SVR (smoothness) + Ridge (stability)
+6.2 Blending Ensemble
+Why use:
+•	Simplicity: Weighted average of model predictions
+•	Fast training: No complex meta-learning required
+•	Stable performance: Less prone to overfitting than stacking
+•	Interpretable weights: Shows relative model importance
+•	Easy deployment: Simple weighted combination in production
+Au cluster specific: Combines best-performing models with optimal weights
+6.3 AutoML (TPOT/Auto-sklearn)
+Why use:
+•	Automated optimization: Explores model and hyperparameter space automatically
+•	Time efficiency: Finds good models without manual tuning
+•	Novel combinations: Discovers unexpected model pipelines
+•	Baseline establishment: Provides strong baseline for custom approaches
+•	Feature engineering: Automatic feature transformation discovery
+Au cluster specific: Discovers optimal preprocessing + model combinations for SOAP features
+6.4 Multi-objective Optimization
+Why use:
+•	Trade-off exploration: Balances accuracy vs interpretability vs speed
+•	Pareto frontier: Identifies models with different trade-offs
+•	Deployment flexibility: Choose model based on specific requirements
+•	Resource constraints: Considers computational limitations
+•	Risk management: Multiple objectives include uncertainty and robustness
+
+use task 1 csv file to learn the model
+

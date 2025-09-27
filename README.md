@@ -21,10 +21,14 @@ which python  # This should be correct
 # List all conda packages in current environment
 conda list
 
-# check first step result 
-python view_pkl.py 
+# after isntalling pip install (MUST)
 
-debug this 
-  ✗ task3_sensitivity_analysis.pdf (missing)
-  ✗ task3_sensitivity_results.pkl (missing)
-  
+# Deep Learning - PyTorch
+pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0
+
+
+# Install PyTorch extensions first, then PyTorch Geometric
+# after isntalling pip install (MUST)
+pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
+  -f https://data.pyg.org/whl/torch-2.4.0+cpu.html
+pip install torch-geometric==2.5.3
