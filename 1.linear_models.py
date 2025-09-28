@@ -14,6 +14,7 @@ from sklearn.linear_model import (
 )
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA  # Added for optional dimensionality reduction
 import warnings
 from matplotlib.patches import Patch  # Added for legend in feature importance
 warnings.filterwarnings('ignore')
@@ -46,6 +47,7 @@ class LinearModelsAnalyzer:
         self.scalers = {}
         self.soap_features = None
         self.feature_names = None  # Added to store actual feature names
+        self.best_soap_params = None  # To store best tuned params
         
         # Initialize models with justifications
         self.model_configs = {
@@ -114,7 +116,124 @@ class LinearModelsAnalyzer:
         
         return self.df
     
-    def create_soap_features(self, structures_data=None):
+    def tune_soap_params(self, structures_data, basic_features_df, y, n_components=None):
+        """
+        Tune SOAP hyperparameters using grid search and cross-validation.
+        Uses RidgeCV as the evaluator model for efficiency.
+        
+        Args:
+            structures_data: List of structure dicts for SOAP computation
+            basic_features_df: DataFrame with basic features and filename
+            y: Target vector
+            n_components: If set, apply PCA to SOAP features with this many components
+        """
+        if not SOAP_AVAILABLE:
+            print("SOAP not available for tuning.")
+            return None
+        
+        print("Tuning SOAP parameters...")
+        
+        # Define grid based on literature and suggestions for small Au clusters (20 atoms)
+        param_grid = {
+            'r_cut': [4.0, 4.48, 5.0],  # Including literature value 4.48
+            'n_max': [6, 8],
+            'l_max': [6, 8],  # Increased max to 8 per literature
+            'sigma': [0.5, 1.0]  # Common values, including default
+        }
+        
+        best_score = -np.inf
+        best_params = None
+        best_soap_df = None
+        
+        # Generate all combinations
+        from itertools import product
+        keys = param_grid.keys()
+        combinations = list(product(*param_grid.values()))
+        
+        for combo in combinations:
+            params = dict(zip(keys, combo))
+            print(f"Testing params: {params}")
+            
+            try:
+                soap = SOAP(
+                    species=['Au'],
+                    r_cut=params['r_cut'],
+                    n_max=params['n_max'],
+                    l_max=params['l_max'],
+                    sigma=params['sigma'],
+                    periodic=False,
+                    sparse=True,  # Set to True for efficiency
+                    average='inner'
+                )
+                
+                soap_features = []
+                filenames = []
+                
+                for structure in structures_data:
+                    try:
+                        atoms = structure['atoms'] if 'atoms' in structure else None
+                        if atoms is None:
+                            coords = structure['coords']
+                            atoms = Atoms('Au' * len(coords), positions=coords)
+                        
+                        soap_desc = soap.create(atoms)
+                        soap_features.append(soap_desc)
+                        filenames.append(structure['filename'])
+                        
+                    except Exception as e:
+                        print(f"Error: {e}")
+                        continue
+                
+                if not soap_features:
+                    continue
+                
+                soap_array = np.vstack(soap_features) if len(soap_features[0].shape) > 1 else np.array(soap_features)
+                
+                # Apply PCA if specified
+                if n_components:
+                    pca = PCA(n_components=n_components)
+                    soap_array = pca.fit_transform(soap_array)
+                    soap_cols = [f'soap_pc_{i}' for i in range(n_components)]
+                else:
+                    soap_cols = [f'soap_{i}' for i in range(soap_array.shape[1])]
+                
+                soap_df = pd.DataFrame(soap_array, columns=soap_cols)
+                soap_df['filename'] = filenames
+                
+                # Merge with basic features
+                merged_df = basic_features_df.merge(soap_df, on='filename', how='inner')
+                feature_cols = [col for col in merged_df.columns if col not in ['filename', 'energy']]  # Assuming target is 'energy'
+                X = merged_df[feature_cols]
+                
+                # Evaluate with RidgeCV cross-validation
+                pipeline = Pipeline([
+                    ('scaler', StandardScaler()),
+                    ('model', RidgeCV(alphas=np.logspace(-3, 3, 50), cv=5))
+                ])
+                cv_scores = cross_val_score(pipeline, X, y, cv=5, scoring='r2')
+                mean_score = cv_scores.mean()
+                
+                print(f"CV R²: {mean_score:.3f}")
+                
+                if mean_score > best_score:
+                    best_score = mean_score
+                    best_params = params
+                    best_soap_df = soap_df
+                    
+            except Exception as e:
+                print(f"Error with params {params}: {e}")
+                continue
+        
+        if best_params:
+            print(f"Best params: {best_params} with CV R²: {best_score:.3f}")
+            self.best_soap_params = best_params
+            # Merge best SOAP into self.df
+            self.df = self.df.merge(best_soap_df, on='filename', how='inner')
+            self.soap_features = [col for col in best_soap_df.columns if col.startswith('soap_')]
+        
+        return best_params
+    
+    def create_soap_features(self, structures_data=None, use_tuned_params=False, n_components=None):
         """
         Create SOAP descriptors for enhanced accuracy
         
@@ -130,15 +249,25 @@ class LinearModelsAnalyzer:
         
         print("Creating SOAP descriptors for enhanced accuracy...")
         
-        # SOAP parameters optimized for Au clusters
+        if use_tuned_params and self.best_soap_params:
+            params = self.best_soap_params
+        else:
+            # Default parameters optimized based on literature for Au clusters
+            params = {
+                'r_cut': 4.48,  # From literature (110% of Au FCC lattice)
+                'n_max': 8,
+                'l_max': 8,     # Increased from 6 based on literature
+                'sigma': 0.5    # Kept original, as literature often uses ~0.5-1.0
+            }
+        
         soap = SOAP(
             species=['Au'],
-            r_cut=5.0,      # Au-Au interaction cutoff
-            n_max=8,        # Radial basis functions
-            l_max=6,        # Angular basis functions  
-            sigma=0.5,      # Gaussian smearing
+            r_cut=params['r_cut'],
+            n_max=params['n_max'],
+            l_max=params['l_max'],
+            sigma=params['sigma'],
             periodic=False, # Clusters (not crystals)
-            sparse=False,   # Dense output for ML
+            sparse=True,    # Changed to True for efficiency
             average='inner' # Average over atoms
         )
         
@@ -151,7 +280,7 @@ class LinearModelsAnalyzer:
                 if atoms is None:
                     # Create atoms object from coordinates
                     coords = structure['coords']
-                    atoms = Atoms('Au' * len(coords), positions=coords)
+                    atoms = Atoms('Au' * 20, positions=coords)  # Fixed to 20 atoms as per user info
                 
                 soap_desc = soap.create(atoms)
                 soap_features.append(soap_desc)
@@ -162,18 +291,25 @@ class LinearModelsAnalyzer:
                 continue
         
         if soap_features:
-            soap_array = np.array(soap_features)
-            soap_df = pd.DataFrame(
-                soap_array, 
-                columns=[f'soap_{i}' for i in range(soap_array.shape[1])]
-            )
+            soap_array = np.vstack(soap_features) if len(soap_features[0].shape) > 1 else np.array(soap_features)
+            
+            # Optional PCA for dimensionality reduction
+            if n_components:
+                pca = PCA(n_components=n_components)
+                soap_array = pca.fit_transform(soap_array)
+                print(f"Applied PCA: Reduced to {n_components} components")
+                soap_cols = [f'soap_pc_{i}' for i in range(n_components)]
+            else:
+                soap_cols = [f'soap_{i}' for i in range(soap_array.shape[1])]
+            
+            soap_df = pd.DataFrame(soap_array, columns=soap_cols)
             soap_df['filename'] = filenames
             
             # Merge with existing data
             self.df = self.df.merge(soap_df, on='filename', how='inner')
             
             print(f"Added {soap_array.shape[1]} SOAP features")
-            self.soap_features = [col for col in self.df.columns if col.startswith('soap_')]
+            self.soap_features = soap_cols
             
         return self.soap_features
     
@@ -557,6 +693,35 @@ def main():
             data_path = "./au_cluster_analysis_results/descriptors.csv"
         
         analyzer.load_data(data_path)
+        
+        # Assuming structures_data is available; user needs to provide or load it
+        # For example: structures_data = load_structures()  # Implement as needed
+        structures_data = None  # Placeholder; set to actual data
+        
+        if structures_data:
+            # Extract basic features df and y for tuning
+            target_column = 'energy'
+            basic_cols = [
+                'filename', 'mean_bond_length', 'std_bond_length', 'n_bonds',
+                'mean_coordination', 'std_coordination', 'max_coordination',
+                'radius_of_gyration', 'asphericity', 'surface_fraction',
+                'x_range', 'y_range', 'z_range', 'anisotropy',
+                'compactness', 'bond_variance', target_column
+            ]
+            basic_df = analyzer.df[basic_cols].dropna()
+            y = basic_df[target_column]
+            basic_features_df = basic_df.drop(columns=[target_column])
+            
+            # Tune SOAP params
+            analyzer.tune_soap_params(
+                structures_data=structures_data,
+                basic_features_df=basic_features_df,
+                y=y,
+                n_components=50  # Optional PCA; set to None to disable
+            )
+            
+            # Or create with tuned/default if not tuning every time
+            # analyzer.create_soap_features(structures_data, use_tuned_params=True, n_components=50)
         
         # Prepare features
         X, y, feature_names = analyzer.prepare_features(target_column='energy')

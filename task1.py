@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Task 1: Au Cluster Analysis - IMPROVED VERSION
-Enhanced descriptors with better surface detection, multivariate outliers, and SOAP integration
+Task 1: Au Cluster Analysis - ASE-Enhanced Competition Version
+Parse xyz files, compute descriptors, and generate statistical summary using ASE
 """
 
 import numpy as np
@@ -12,8 +12,6 @@ from pathlib import Path
 from scipy.stats import pearsonr, spearmanr
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import IsolationForest
-from sklearn.covariance import EmpiricalCovariance
 from collections import Counter
 import re
 import warnings
@@ -26,33 +24,23 @@ from ase.geometry.analysis import Analysis
 from ase.data import covalent_radii, atomic_numbers
 from ase.atoms import Atoms
 
-# SOAP descriptors
-try:
-    from dscribe.descriptors import SOAP
-    SOAP_AVAILABLE = True
-except ImportError:
-    print("Warning: DScribe not available. SOAP descriptors will be skipped.")
-    SOAP_AVAILABLE = False
-
-class ImprovedAuClusterAnalyzer:
+class AuClusterAnalyzer:
+    """ASE-enhanced analyzer for Au cluster xyz files - Competition optimized"""
     
-    def __init__(self, data_dir, surface_threshold_mode='bulk_reference'):
+    def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
         self.structures = []
-        self.surface_threshold_mode = surface_threshold_mode
-        self.soap_features = None
-        
-        # Bulk Au coordination reference (fcc = 12)
-        self.bulk_coordination_au = 12
         
     def parse_xyz_file(self, filepath):
         """Parse single xyz file using ASE - robust and accurate"""
         try:
+            # Use ASE to read xyz file
             atoms = read(str(filepath))
             
-            # Extract energy from comment line
+            # Extract energy from comment line (ASE reads it automatically)
             energy = atoms.info.get('energy', None)
             
+            # If energy not in info, parse manually from file
             if energy is None:
                 with open(filepath, 'r') as f:
                     lines = f.readlines()
@@ -63,7 +51,7 @@ class ImprovedAuClusterAnalyzer:
                 'filename': filepath.name,
                 'n_atoms': len(atoms),
                 'energy': energy,
-                'atoms': atoms,
+                'atoms': atoms,  # Store ASE Atoms object
                 'coords': atoms.get_positions(),
                 'elements': atoms.get_chemical_symbols()
             }
@@ -78,7 +66,8 @@ class ImprovedAuClusterAnalyzer:
         for num in numbers:
             try:
                 val = float(num)
-                if -50000 < val < 50000:  # Au cluster energy range
+                # Au cluster energies typically in this range
+                if -50000 < val < 50000:
                     return val
             except:
                 continue
@@ -86,15 +75,25 @@ class ImprovedAuClusterAnalyzer:
     
     def parse_all_files(self):
         """Parse all xyz files in directory"""
+        # Check if directory exists
         if not self.data_dir.exists():
             print(f"Directory does not exist: {self.data_dir}")
             return []
             
+        # Try different patterns
         xyz_files = list(self.data_dir.glob("*.xyz"))
         if len(xyz_files) == 0:
             xyz_files = list(self.data_dir.glob("**/*.xyz"))
         
         print(f"Found {len(xyz_files)} xyz files")
+        if len(xyz_files) == 0:
+            print(f"No .xyz files found in: {self.data_dir}")
+            print("Contents of directory:")
+            try:
+                for item in self.data_dir.iterdir():
+                    print(f"  {item.name}")
+            except:
+                print("  Cannot list directory contents")
         
         for filepath in xyz_files:
             structure = self.parse_xyz_file(filepath)
@@ -106,6 +105,7 @@ class ImprovedAuClusterAnalyzer:
     
     def compute_bond_lengths_ase(self, atoms):
         """Compute bond lengths using ASE neighbor list"""
+        # Use natural cutoffs for Au (more accurate)
         cutoffs = natural_cutoffs(atoms, mult=1.2)
         nl = NeighborList(cutoffs, self_interaction=False, bothways=True)
         nl.update(atoms)
@@ -122,7 +122,7 @@ class ImprovedAuClusterAnalyzer:
     
     def compute_coordination_numbers_ase(self, atoms):
         """Compute coordination numbers using ASE"""
-        cutoffs = natural_cutoffs(atoms, mult=1.1)
+        cutoffs = natural_cutoffs(atoms, mult=1.1)  # Standard cutoff
         nl = NeighborList(cutoffs, self_interaction=False, bothways=True)
         nl.update(atoms)
         
@@ -133,48 +133,31 @@ class ImprovedAuClusterAnalyzer:
         
         return np.array(coord_nums)
     
-    def compute_surface_atoms_improved(self, atoms, threshold_mode='bulk_reference'):
-        """
-        IMPROVED surface atom detection
-        
-        Modes:
-        - 'bulk_reference': Use bulk Au coordination (12) as reference
-        - 'adaptive': Use mean-based threshold (original method)
-        - 'size_scaled': Scale threshold based on cluster size
-        """
+    def compute_surface_atoms_ase(self, atoms):
+        """Identify surface atoms using coordination analysis"""
         coord_nums = self.compute_coordination_numbers_ase(atoms)
         
-        if threshold_mode == 'bulk_reference':
-            # Surface atoms have coordination < 75% of bulk (≤ 9 for Au)
-            surface_threshold = 0.75 * self.bulk_coordination_au  # 9
-            
-        elif threshold_mode == 'size_scaled':
-            # Scale threshold based on cluster size
-            n_atoms = len(atoms)
-            if n_atoms <= 20:
-                surface_threshold = 6  # Small clusters
-            elif n_atoms <= 100:
-                surface_threshold = 8  # Medium clusters
-            else:
-                surface_threshold = 9  # Large clusters
-                
-        else:  # 'adaptive' (original method)
-            mean_coord = np.mean(coord_nums)
-            surface_threshold = mean_coord - 1.0
+        # Surface atoms have lower coordination
+        mean_coord = np.mean(coord_nums)
+        surface_threshold = mean_coord - 1.0  # Adaptive threshold
         
         surface_atoms = np.sum(coord_nums <= surface_threshold)
-        
-        return {
-            'surface_fraction': surface_atoms / len(atoms),
-            'surface_threshold': surface_threshold,
-            'surface_count': surface_atoms
-        }
+        return surface_atoms / len(atoms)
     
-    def compute_gyration_tensor_properties(self, atoms):
-        """
-        IMPROVED geometric properties using gyration tensor
-        More robust than bounding box ranges
-        """
+    def compute_radius_of_gyration_ase(self, atoms):
+        """Compute radius of gyration using ASE"""
+        positions = atoms.get_positions()
+        center_of_mass = atoms.get_center_of_mass()
+        
+        distances_sq = np.sum((positions - center_of_mass)**2, axis=1)
+        masses = atoms.get_masses()
+        
+        # Mass-weighted radius of gyration
+        rg_sq = np.sum(masses * distances_sq) / np.sum(masses)
+        return np.sqrt(rg_sq)
+    
+    def compute_asphericity_ase(self, atoms):
+        """Compute asphericity using ASE"""
         positions = atoms.get_positions()
         com = atoms.get_center_of_mass()
         
@@ -184,195 +167,44 @@ class ImprovedAuClusterAnalyzer:
         # Gyration tensor
         gyration_tensor = np.dot(centered.T, centered) / len(atoms)
         eigenvals = np.linalg.eigvals(gyration_tensor)
-        eigenvals = np.sort(eigenvals)[::-1]  # Sort descending
+        eigenvals = np.sort(eigenvals)[::-1]
         
-        # Robust geometric descriptors
-        rg_squared = np.sum(eigenvals)
-        radius_of_gyration = np.sqrt(rg_squared)
-        
-        # Improved anisotropy (outlier-resistant)
-        if eigenvals[2] > 1e-8:  # Avoid division by zero
-            anisotropy_tensor = eigenvals[0] / eigenvals[2]
-        else:
-            anisotropy_tensor = eigenvals[0] / (eigenvals[2] + 1e-8)
-        
-        # Asphericity
-        asphericity = eigenvals[0] - 0.5 * (eigenvals[1] + eigenvals[2])
-        if rg_squared > 0:
-            asphericity_normalized = asphericity / rg_squared
-        else:
-            asphericity_normalized = 0.0
-        
-        # Triaxial ratios
-        c_over_a = np.sqrt(eigenvals[2] / eigenvals[0]) if eigenvals[0] > 0 else 0
-        b_over_a = np.sqrt(eigenvals[1] / eigenvals[0]) if eigenvals[0] > 0 else 0
-        
-        return {
-            'radius_of_gyration': radius_of_gyration,
-            'asphericity': asphericity_normalized,
-            'anisotropy_tensor': anisotropy_tensor,  # Improved version
-            'triaxial_c_a': c_over_a,
-            'triaxial_b_a': b_over_a,
-            'gyration_eigenvals': eigenvals
-        }
+        # Asphericity parameter
+        if np.sum(eigenvals) > 0:
+            asphericity = eigenvals[0] - 0.5 * (eigenvals[1] + eigenvals[2])
+            return asphericity / np.sum(eigenvals)
+        return 0.0
     
-    def compute_radial_distribution_function(self, atoms, r_max=10.0, n_bins=20):
-        """
-        Compute radial distribution function (RDF) features
-        Provides richer local environment information
-        """
-        positions = atoms.get_positions()
-        n_atoms = len(positions)
-        
-        # Compute all pairwise distances
-        distances = []
-        for i in range(n_atoms):
-            for j in range(i+1, n_atoms):
-                dist = np.linalg.norm(positions[i] - positions[j])
-                if dist <= r_max:
-                    distances.append(dist)
-        
-        if len(distances) == 0:
-            return {'rdf_features': np.zeros(n_bins)}
-        
-        # Create histogram (RDF)
-        hist, bin_edges = np.histogram(distances, bins=n_bins, range=(0, r_max))
-        
-        # Normalize by number of pairs and bin volume
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        bin_width = bin_edges[1] - bin_edges[0]
-        
-        # Volume normalization for spherical shells
-        for i in range(n_bins):
-            r = bin_centers[i]
-            if r > 0:
-                shell_volume = 4 * np.pi * r**2 * bin_width
-                hist[i] = hist[i] / shell_volume
-        
-        rdf_features = {}
-        for i, val in enumerate(hist):
-            rdf_features[f'rdf_bin_{i+1}'] = val
-        
-        return rdf_features
-    
-    def compute_sphericity_index(self, atoms):
-        """
-        Compute sphericity index = surface area of equivalent sphere / actual surface area
-        More accurate than simple compactness
-        """
+    def compute_advanced_descriptors(self, atoms):
+        """Compute advanced structural descriptors"""
         positions = atoms.get_positions()
         
-        # Estimate surface area using convex hull (approximation)
-        try:
-            from scipy.spatial import ConvexHull
-            hull = ConvexHull(positions)
-            surface_area_approx = hull.area
-        except:
-            # Fallback: use bounding sphere approximation
-            ranges = np.max(positions, axis=0) - np.min(positions, axis=0)
-            max_range = np.max(ranges)
-            surface_area_approx = 4 * np.pi * (max_range/2)**2
+        # Geometric properties
+        ranges = np.max(positions, axis=0) - np.min(positions, axis=0)
         
-        # Volume-equivalent sphere
-        n_atoms = len(atoms)
-        atom_volume = 4/3 * np.pi * (1.44)**3  # Au atomic radius ≈ 1.44 Å
-        total_volume = n_atoms * atom_volume
+        # Bond angle analysis (simplified)
+        bonds = self.compute_bond_lengths_ase(atoms)
         
-        # Radius of equivalent sphere
-        equiv_radius = (3 * total_volume / (4 * np.pi))**(1/3)
-        equiv_surface_area = 4 * np.pi * equiv_radius**2
-        
-        # Sphericity index
-        if surface_area_approx > 0:
-            sphericity = equiv_surface_area / surface_area_approx
-        else:
-            sphericity = 1.0
+        # Structural compactness
+        volume_estimate = np.prod(ranges)
+        compactness = len(atoms) / (volume_estimate + 1e-8)
         
         return {
-            'sphericity_index': sphericity,
-            'equiv_radius': equiv_radius,
-            'surface_area_approx': surface_area_approx
+            'x_range': ranges[0],
+            'y_range': ranges[1], 
+            'z_range': ranges[2],
+            'max_range': np.max(ranges),
+            'anisotropy': np.max(ranges) / np.min(ranges) if np.min(ranges) > 0 else 1.0,
+            'volume_estimate': volume_estimate,
+            'compactness': compactness,
+            'bond_variance': np.var(bonds) if len(bonds) > 0 else 0.0
         }
-    
-    def create_soap_features(self):
-        """
-        Create SOAP descriptors with PCA dimensionality reduction
-        Retains 95% variance as recommended
-        """
-        if not SOAP_AVAILABLE:
-            print("SOAP descriptors skipped - DScribe not available")
-            return None
-        
-        print("Creating SOAP descriptors...")
-        
-        # SOAP parameters for Au clusters
-        soap = SOAP(
-            species=['Au'],
-            r_cut=6.0,      # Au interaction range
-            n_max=8,        # Radial basis
-            l_max=6,        # Angular basis
-            sigma=0.5,      # Gaussian width
-            periodic=False, # Clusters
-            sparse=False,   # Dense for PCA
-            average='inner' # Average over atoms
-        )
-        
-        soap_features = []
-        filenames = []
-        
-        for structure in self.structures:
-            try:
-                atoms = structure['atoms']
-                soap_desc = soap.create(atoms)
-                soap_features.append(soap_desc)
-                filenames.append(structure['filename'])
-            except Exception as e:
-                print(f"SOAP error for {structure['filename']}: {e}")
-                continue
-        
-        if not soap_features:
-            return None
-        
-        # Convert to array and apply PCA
-        soap_array = np.array(soap_features)
-        print(f"Original SOAP dimensions: {soap_array.shape}")
-        
-        # Standardize before PCA
-        scaler = StandardScaler()
-        soap_scaled = scaler.fit_transform(soap_array)
-        
-        # PCA to retain 95% variance
-        pca = PCA(n_components=0.95, random_state=42)
-        soap_pca = pca.fit_transform(soap_scaled)
-        
-        print(f"SOAP after PCA (95% variance): {soap_pca.shape}")
-        print(f"Explained variance: {pca.explained_variance_ratio_.sum():.3f}")
-        
-        # Create DataFrame
-        soap_df = pd.DataFrame(
-            soap_pca,
-            columns=[f'soap_pc_{i+1}' for i in range(soap_pca.shape[1])]
-        )
-        soap_df['filename'] = filenames
-        
-        self.soap_features = [col for col in soap_df.columns if col.startswith('soap_')]
-        self.soap_pca_info = {
-            'pca': pca,
-            'scaler': scaler,
-            'n_components': soap_pca.shape[1],
-            'explained_variance': pca.explained_variance_ratio_.sum()
-        }
-        
-        return soap_df
     
     def compute_descriptors(self):
-        """Compute all enhanced descriptors"""
+        """Compute all descriptors for parsed structures using ASE"""
         descriptors = []
         
-        print(f"Computing ENHANCED descriptors for {len(self.structures)} structures...")
-        
-        # Create SOAP features first
-        soap_df = self.create_soap_features()
+        print(f"Computing ASE-enhanced descriptors for {len(self.structures)} structures...")
         
         for structure in self.structures:
             atoms = structure['atoms']
@@ -385,26 +217,27 @@ class ImprovedAuClusterAnalyzer:
                 'energy_per_atom': structure['energy'] / structure['n_atoms'] if structure['energy'] else None
             }
             
-            # Bond statistics
-            bonds = self.compute_bond_lengths_ase(atoms)
+            # ASE-enhanced bond statistics
+            bonds = self.compute_bond_lengths_ase(atoms)  # Fixed: use ASE version
             if len(bonds) > 0:
                 desc.update({
                     'mean_bond_length': np.mean(bonds),
                     'std_bond_length': np.std(bonds),
                     'min_bond_length': np.min(bonds),
                     'max_bond_length': np.max(bonds),
-                    'n_bonds': len(bonds),
-                    'bond_variance': np.var(bonds)  # Keep for continuity
+                    'n_bonds': len(bonds)
                 })
             else:
                 desc.update({
-                    'mean_bond_length': None, 'std_bond_length': None,
-                    'min_bond_length': None, 'max_bond_length': None,
-                    'n_bonds': 0, 'bond_variance': 0.0
+                    'mean_bond_length': None,
+                    'std_bond_length': None,
+                    'min_bond_length': None,
+                    'max_bond_length': None,
+                    'n_bonds': 0
                 })
             
-            # Coordination statistics
-            coord_nums = self.compute_coordination_numbers_ase(atoms)
+            # ASE-enhanced coordination statistics
+            coord_nums = self.compute_coordination_numbers_ase(atoms)  # Fixed: use ASE version
             desc.update({
                 'mean_coordination': np.mean(coord_nums),
                 'std_coordination': np.std(coord_nums),
@@ -412,171 +245,215 @@ class ImprovedAuClusterAnalyzer:
                 'min_coordination': np.min(coord_nums)
             })
             
-            # IMPROVED surface detection
-            surface_info = self.compute_surface_atoms_improved(atoms, self.surface_threshold_mode)
-            desc.update(surface_info)
-            
-            # IMPROVED geometric properties (gyration tensor)
-            geom_props = self.compute_gyration_tensor_properties(atoms)
-            desc.update(geom_props)
-            
-            # RDF features
-            rdf_features = self.compute_radial_distribution_function(atoms)
-            desc.update(rdf_features)
-            
-            # Sphericity index
-            sphericity_info = self.compute_sphericity_index(atoms)
-            desc.update(sphericity_info)
-            
-            # Legacy descriptors (for compatibility)
-            positions = atoms.get_positions()
-            ranges = np.max(positions, axis=0) - np.min(positions, axis=0)
+            # ASE-enhanced geometric properties
             desc.update({
-                'x_range': ranges[0],
-                'y_range': ranges[1], 
-                'z_range': ranges[2],
-                'max_range': np.max(ranges),
-                'anisotropy': np.max(ranges) / np.min(ranges) if np.min(ranges) > 0 else 1.0,  # Keep legacy
-                'volume_estimate': np.prod(ranges),
-                'compactness': len(atoms) / (np.prod(ranges) + 1e-8)
+                'radius_of_gyration': self.compute_radius_of_gyration_ase(atoms),  # Fixed: use ASE version
+                'asphericity': self.compute_asphericity_ase(atoms),  # Fixed: use ASE version
+                'surface_fraction': self.compute_surface_atoms_ase(atoms)  # Fixed: use ASE version
             })
+            
+            # Advanced descriptors
+            advanced_desc = self.compute_advanced_descriptors(atoms)
+            desc.update(advanced_desc)
             
             descriptors.append(desc)
         
-        df = pd.DataFrame(descriptors)
-        
-        # Merge with SOAP features if available
-        if soap_df is not None:
-            df = df.merge(soap_df, on='filename', how='left')
-            print(f"Added {len(self.soap_features)} SOAP PCA features")
-        
-        return df
+        return pd.DataFrame(descriptors)
     
-    def detect_multivariate_outliers(self, df, method='both'):
-        """
-        IMPROVED multivariate outlier detection
-        Methods: 'mahalanobis', 'isolation_forest', 'both'
-        """
+    def generate_statistics(self, df):
+        """Generate statistical summary"""
         print("\n" + "="*60)
-        print("MULTIVARIATE OUTLIER DETECTION")
+        print("STATISTICAL SUMMARY")
         print("="*60)
         
-        # Select numeric features (excluding identifiers)
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        feature_cols = [col for col in numeric_cols if col not in ['energy', 'energy_per_atom']]
+        # Dataset overview
+        print(f"\nDataset Overview:")
+        print(f"  Total structures: {len(df)}")
+        print(f"  Structures with energy: {df['energy'].notna().sum()}")
         
-        # Clean data
-        df_clean = df[feature_cols].dropna()
+        # Size distribution
+        print(f"\nSize Distribution:")
+        print(f"  Atoms per cluster: {df['n_atoms'].min()} - {df['n_atoms'].max()}")
+        print(f"  Average size: {df['n_atoms'].mean():.1f} atoms")
         
-        if len(df_clean) < 10:
-            print("Not enough samples for multivariate outlier detection")
-            return df
-        
-        # Standardize features (CRITICAL for outlier detection)
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(df_clean)
-        
-        outlier_scores = {}
-        
-        # 1. Mahalanobis distance
-        if method in ['mahalanobis', 'both']:
-            try:
-                cov = EmpiricalCovariance().fit(X_scaled)
-                mahal_dist = cov.mahalanobis(X_scaled)
-                
-                # Threshold: 97.5th percentile (2.5% outliers)
-                threshold = np.percentile(mahal_dist, 97.5)
-                mahal_outliers = mahal_dist > threshold
-                
-                outlier_scores['mahalanobis'] = mahal_dist
-                outlier_scores['mahalanobis_outliers'] = mahal_outliers
-                
-                print(f"Mahalanobis outliers: {np.sum(mahal_outliers)} ({np.sum(mahal_outliers)/len(df_clean)*100:.1f}%)")
-                
-            except Exception as e:
-                print(f"Mahalanobis distance failed: {e}")
-        
-        # 2. Isolation Forest
-        if method in ['isolation_forest', 'both']:
-            iso_forest = IsolationForest(contamination=0.05, random_state=42)
-            iso_outliers = iso_forest.fit_predict(X_scaled) == -1
-            iso_scores = iso_forest.score_samples(X_scaled)
+        # Energy statistics
+        if df['energy'].notna().sum() > 0:
+            energies = df['energy'].dropna()
+            print(f"\nEnergy Statistics:")
+            print(f"  Total energy range: {energies.min():.2f} to {energies.max():.2f} eV")
+            print(f"  Average total energy: {energies.mean():.2f} eV")
             
-            outlier_scores['isolation_forest'] = -iso_scores  # Convert to distance
-            outlier_scores['isolation_outliers'] = iso_outliers
-            
-            print(f"Isolation Forest outliers: {np.sum(iso_outliers)} ({np.sum(iso_outliers)/len(df_clean)*100:.1f}%)")
+            if df['energy_per_atom'].notna().sum() > 0:
+                energy_per_atom = df['energy_per_atom'].dropna()
+                print(f"  Energy per atom range: {energy_per_atom.min():.2f} to {energy_per_atom.max():.2f} eV/atom")
+                print(f"  Average energy per atom: {energy_per_atom.mean():.2f} eV/atom")
         
-        # Add outlier information to dataframe
-        df_result = df.copy()
+        # Structural statistics
+        print(f"\nStructural Properties:")
+        if df['mean_bond_length'].notna().sum() > 0:
+            bond_lengths = df['mean_bond_length'].dropna()
+            print(f"  Bond lengths: {bond_lengths.min():.3f} - {bond_lengths.max():.3f} Å (avg: {bond_lengths.mean():.3f})")
         
-        for method_name, scores in outlier_scores.items():
-            if method_name.endswith('_outliers'):
-                continue
-            
-            # Align with original dataframe
-            outlier_col = f'{method_name}_score'
-            df_result[outlier_col] = np.nan
-            df_result.loc[df_clean.index, outlier_col] = scores
-            
-            # Add binary outlier column
-            outlier_binary_col = f'{method_name}_outlier'
-            df_result[outlier_binary_col] = False
-            outliers_key = f'{method_name}_outliers'
-            if outliers_key in outlier_scores:
-                df_result.loc[df_clean.index, outlier_binary_col] = outlier_scores[outliers_key]
+        coord_nums = df['mean_coordination'].dropna()
+        print(f"  Coordination numbers: {coord_nums.min():.1f} - {coord_nums.max():.1f} (avg: {coord_nums.mean():.1f})")
         
-        return df_result
+        rg_values = df['radius_of_gyration'].dropna()
+        print(f"  Radius of gyration: {rg_values.min():.2f} - {rg_values.max():.2f} Å (avg: {rg_values.mean():.2f})")
+        
+        surface_fractions = df['surface_fraction'].dropna()
+        print(f"  Surface fraction: {surface_fractions.min():.2f} - {surface_fractions.max():.2f} (avg: {surface_fractions.mean():.2f})")
+        
+        return df.describe()
     
-    def analyze_feature_correlations_standardized(self, df, target_col='energy'):
-        """
-        IMPROVED correlation analysis with standardized features
-        Addresses the scaling issue mentioned in recommendations
-        """
+    def create_plots(self, df, output_dir=None):
+        """Generate basic plots"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # Set style
+        plt.style.use('default')
+        sns.set_palette("husl")
+        
+        # 1. Energy vs Size plot
+        if df['energy'].notna().sum() > 1:
+            plt.figure(figsize=(10, 6))
+            valid_data = df.dropna(subset=['energy', 'n_atoms'])
+            plt.scatter(valid_data['n_atoms'], valid_data['energy'], alpha=0.7, s=50)
+            plt.xlabel('Number of Atoms')
+            plt.ylabel('Total Energy (eV)')
+            plt.title('Energy vs Cluster Size')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(output_dir / 'energy_vs_size.png', dpi=300)
+            plt.close()
+        
+        # 2. Key descriptors distribution
+        key_features = ['mean_bond_length', 'mean_coordination', 'radius_of_gyration', 'surface_fraction']
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        axes = axes.flatten()
+        
+        for i, feature in enumerate(key_features):
+            if feature in df.columns and df[feature].notna().sum() > 0:
+                data = df[feature].dropna()
+                axes[i].hist(data, bins=20, alpha=0.7, edgecolor='black')
+                axes[i].set_title(f'{feature.replace("_", " ").title()}')
+                axes[i].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'descriptors_distribution.png', dpi=300)
+        plt.close()
+        
+        # 3. Correlation heatmap
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 1:
+            plt.figure(figsize=(10, 8))
+            corr_matrix = df[numeric_cols].corr()
+            sns.heatmap(corr_matrix, annot=True, cmap='RdBu_r', center=0, fmt='.2f')
+            plt.title('Feature Correlation Matrix')
+            plt.tight_layout()
+            plt.savefig(output_dir / 'correlation_heatmap.png', dpi=300)
+            plt.close()
+        
+        print(f"Plots saved to {output_dir}")
+    
+    def save_results(self, df, output_dir=None):
+        """Save results to files"""
+        if output_dir is None:
+            output_dir = Path('./results')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # Save descriptors CSV (computed features)
+        df.to_csv(output_dir / 'descriptors.csv', index=False)
+        
+        # Save raw data with coordinates (enhanced with ASE data)
+        raw_data = []
+        for structure in self.structures:
+            atoms = structure['atoms']
+            coords = atoms.get_positions()
+            elements = atoms.get_chemical_symbols()
+            
+            for i, (coord, element) in enumerate(zip(coords, elements)):
+                raw_data.append({
+                    'filename': structure['filename'],
+                    'n_atoms': structure['n_atoms'],
+                    'energy': structure['energy'],
+                    'atom_index': i + 1,
+                    'element': element,
+                    'x': coord[0],
+                    'y': coord[1],
+                    'z': coord[2]
+                })
+        
+        raw_df = pd.DataFrame(raw_data)
+        raw_df.to_csv(output_dir / 'raw_coordinates.csv', index=False)
+        
+        # Save summary statistics
+        summary_stats = df.describe()
+        summary_stats.to_csv(output_dir / 'summary_statistics.csv')
+        
+        # Save structure summary (one row per file)
+        structure_summary = []
+        for structure in self.structures:
+            structure_summary.append({
+                'filename': structure['filename'],
+                'n_atoms': structure['n_atoms'],
+                'energy': structure['energy'],
+                'energy_per_atom': structure['energy'] / structure['n_atoms'] if structure['energy'] else None
+            })
+        
+        summary_df = pd.DataFrame(structure_summary)
+        summary_df.to_csv(output_dir / 'structure_summary.csv', index=False)
+        
+        print(f"Results saved to {output_dir}")
+        print(f"  - descriptors.csv: Computed structural features")
+        print(f"  - raw_coordinates.csv: All atomic coordinates")  
+        print(f"  - structure_summary.csv: Basic info per structure")
+        print(f"  - summary_statistics.csv: Statistical summary")
+        
+        return output_dir
+    
+    def analyze_feature_target_relationships(self, df, target_col='energy'):
+        """Analyze correlations between features and target variable"""
         if target_col not in df.columns or df[target_col].isna().all():
-            print(f"Target column '{target_col}' not available")
+            print(f"Target column '{target_col}' not available for correlation analysis")
             return None
             
         print("\n" + "="*60)
-        print("STANDARDIZED FEATURE-TARGET CORRELATION ANALYSIS")
+        print("FEATURE-TARGET RELATIONSHIP ANALYSIS")
         print("="*60)
         
-        # Select numeric features
+        # Select numeric features (excluding target and identifiers)
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         feature_cols = [col for col in numeric_cols if col not in [target_col, 'energy_per_atom']]
         
-        # Clean data
-        df_clean = df[feature_cols + [target_col]].dropna()
-        
-        if len(df_clean) < 5:
-            print("Not enough samples for correlation analysis")
-            return None
-        
-        # STANDARDIZE FEATURES (z-score normalization)
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(df_clean[feature_cols])
-        X_scaled_df = pd.DataFrame(X_scaled, columns=feature_cols, index=df_clean.index)
+        # Remove rows with missing target values
+        df_clean = df.dropna(subset=[target_col])
         
         correlations = []
         
-        for i, feature in enumerate(feature_cols):
-            if df_clean[feature].notna().sum() > 5:
-                # Use standardized features
-                x_scaled = X_scaled_df[feature]
-                y = df_clean[target_col]
-                
-                # Remove any remaining NaN values
-                mask = x_scaled.notna() & y.notna()
+        for feature in feature_cols:
+            if df_clean[feature].notna().sum() > 5:  # Need at least 5 data points
+                # Remove missing values for this feature
+                mask = df_clean[feature].notna() & df_clean[target_col].notna()
                 if mask.sum() < 5:
                     continue
-                
-                x_clean = x_scaled[mask]
-                y_clean = y[mask]
+                    
+                x = df_clean.loc[mask, feature]
+                y = df_clean.loc[mask, target_col]
                 
                 try:
-                    # Correlations with standardized features
-                    pearson_r, pearson_p = pearsonr(x_clean, y_clean)
-                    spearman_r, spearman_p = spearmanr(x_clean, y_clean)
+                    # Pearson correlation
+                    pearson_r, pearson_p = pearsonr(x, y)
+                    
+                    # Spearman correlation  
+                    spearman_r, spearman_p = spearmanr(x, y)
                     
                     correlations.append({
                         'feature': feature,
@@ -587,458 +464,979 @@ class ImprovedAuClusterAnalyzer:
                         'abs_pearson': abs(pearson_r),
                         'n_samples': mask.sum()
                     })
-                except Exception as e:
-                    print(f"Correlation error for {feature}: {e}")
+                except:
                     continue
         
         if not correlations:
             print("No valid correlations found")
             return None
-        
+            
         corr_df = pd.DataFrame(correlations)
         corr_df = corr_df.sort_values('abs_pearson', ascending=False)
         
-        print(f"\nTop 10 Features by Correlation with {target_col} (STANDARDIZED):")
+        print(f"\nTop 10 Features by Correlation with {target_col}:")
         print("-" * 80)
         for _, row in corr_df.head(10).iterrows():
             significance = "**" if row['pearson_p'] < 0.01 else "*" if row['pearson_p'] < 0.05 else ""
-            print(f"{row['feature']:<30} | r = {row['pearson_r']:6.3f}{significance} | ρ = {row['spearman_r']:6.3f} | n={row['n_samples']}")
+            print(f"{row['feature']:<25} | Pearson: {row['pearson_r']:.3f}{significance} | Spearman: {row['spearman_r']:.3f} | n={row['n_samples']}")
         
         print("\n** p < 0.01, * p < 0.05")
         
         return corr_df
     
-    def create_enhanced_visualizations(self, df, output_dir):
-        """Create enhanced visualizations including multivariate outliers"""
-        output_dir = Path(output_dir)
+    def create_feature_target_plots(self, df, corr_df, target_col='energy', output_dir=None):
+        """Create scatter plots of key features vs target"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
         output_dir.mkdir(exist_ok=True)
         
-        # 1. Multivariate outlier visualization
-        self._plot_multivariate_outliers(df, output_dir)
+        # Get top 6 features for plotting
+        top_features = corr_df.head(6)['feature'].tolist()
         
-        # 2. RDF features visualization
-        self._plot_rdf_features(df, output_dir)
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
         
-        # 3. Improved geometric properties comparison
-        self._plot_geometric_improvements(df, output_dir)
+        df_clean = df.dropna(subset=[target_col])
         
-        # 4. SOAP PCA visualization
-        if self.soap_features:
-            self._plot_soap_analysis(df, output_dir)
-        
-        print(f"Enhanced visualizations saved to {output_dir}")
-    
-    def _plot_multivariate_outliers(self, df, output_dir):
-        """Plot multivariate outlier analysis"""
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        
-        # Check for outlier columns
-        outlier_cols = [col for col in df.columns if '_score' in col]
-        
-        if not outlier_cols:
-            axes[0,0].text(0.5, 0.5, 'No outlier scores\navailable', ha='center', va='center')
-            axes[0,0].set_title('Multivariate Outlier Detection')
-        else:
-            # Mahalanobis distances
-            if 'mahalanobis_score' in df.columns:
-                scores = df['mahalanobis_score'].dropna()
-                outliers = df['mahalanobis_outlier'].fillna(False)
+        for i, feature in enumerate(top_features):
+            if i >= 6:
+                break
                 
-                axes[0,0].hist(scores, bins=20, alpha=0.7, edgecolor='black')
-                if len(scores) > 0:
-                    threshold = np.percentile(scores, 97.5)
-                    axes[0,0].axvline(threshold, color='red', linestyle='--', label=f'Threshold: {threshold:.2f}')
-                axes[0,0].set_xlabel('Mahalanobis Distance')
-                axes[0,0].set_ylabel('Frequency')
-                axes[0,0].set_title('Mahalanobis Distance Distribution')
-                axes[0,0].legend()
-                axes[0,0].grid(True, alpha=0.3)
+            # Get clean data for this feature
+            mask = df_clean[feature].notna() & df_clean[target_col].notna()
+            x = df_clean.loc[mask, feature]
+            y = df_clean.loc[mask, target_col]
             
-            # Isolation Forest scores
-            if 'isolation_forest_score' in df.columns:
-                scores = df['isolation_forest_score'].dropna()
-                
-                axes[0,1].hist(scores, bins=20, alpha=0.7, edgecolor='black', color='orange')
-                axes[0,1].set_xlabel('Isolation Forest Anomaly Score')
-                axes[0,1].set_ylabel('Frequency')
-                axes[0,1].set_title('Isolation Forest Score Distribution')
-                axes[0,1].grid(True, alpha=0.3)
-        
-        # Outlier comparison by energy
-        if 'energy' in df.columns:
-            for i, method in enumerate(['mahalanobis', 'isolation_forest']):
-                outlier_col = f'{method}_outlier'
-                if outlier_col in df.columns:
-                    ax = axes[1, i]
-                    
-                    # Separate outliers and normal points
-                    normal_mask = ~df[outlier_col].fillna(False)
-                    outlier_mask = df[outlier_col].fillna(False)
-                    
-                    if normal_mask.sum() > 0:
-                        ax.scatter(df.loc[normal_mask, 'n_atoms'], df.loc[normal_mask, 'energy'], 
-                                 alpha=0.6, label='Normal', s=50)
-                    
-                    if outlier_mask.sum() > 0:
-                        ax.scatter(df.loc[outlier_mask, 'n_atoms'], df.loc[outlier_mask, 'energy'], 
-                                 color='red', alpha=0.8, label='Outliers', s=100, marker='x')
-                    
-                    ax.set_xlabel('Number of Atoms')
-                    ax.set_ylabel('Energy (eV)')
-                    ax.set_title(f'{method.title()} Outliers vs Energy')
-                    ax.legend()
-                    ax.grid(True, alpha=0.3)
+            if len(x) < 2:
+                continue
+            
+            # Scatter plot
+            axes[i].scatter(x, y, alpha=0.6, s=50)
+            
+            # Add trend line
+            z = np.polyfit(x, y, 1)
+            p = np.poly1d(z)
+            axes[i].plot(x.sort_values(), p(x.sort_values()), "r--", alpha=0.8)
+            
+            # Get correlation for this feature
+            corr_row = corr_df[corr_df['feature'] == feature].iloc[0]
+            r_val = corr_row['pearson_r']
+            
+            axes[i].set_xlabel(feature.replace('_', ' ').title())
+            axes[i].set_ylabel(target_col.replace('_', ' ').title())
+            axes[i].set_title(f'{feature}\nr = {r_val:.3f}')
+            axes[i].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(output_dir / 'multivariate_outliers.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'feature_target_relationships.png', dpi=300, bbox_inches='tight')
         plt.close()
+        
+        print(f"Feature-target relationship plots saved")
     
-    def _plot_rdf_features(self, df, output_dir):
-        """Plot RDF features analysis"""
-        rdf_cols = [col for col in df.columns if col.startswith('rdf_bin_')]
+    def perform_pca_analysis(self, df, output_dir=None):
+        """Perform PCA analysis and visualization"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
         
-        if not rdf_cols:
-            return
+        output_dir.mkdir(exist_ok=True)
         
+        print("\n" + "="*60)
+        print("PRINCIPAL COMPONENT ANALYSIS")
+        print("="*60)
+        
+        # Select numeric features (excluding identifiers and target)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        feature_cols = [col for col in numeric_cols if col not in ['energy', 'energy_per_atom']]
+        
+        # Prepare data
+        df_pca = df[feature_cols + ['energy']].dropna()
+        
+        if len(df_pca) < 5:
+            print("Not enough samples for PCA analysis")
+            return None
+        
+        X = df_pca[feature_cols]
+        
+        # Remove columns with zero variance
+        X = X.loc[:, X.var() > 1e-8]
+        
+        if X.shape[1] < 2:
+            print("Not enough features with variance for PCA")
+            return None
+        
+        # Standardize features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Perform PCA
+        pca = PCA()
+        X_pca = pca.fit_transform(X_scaled)
+        
+        # Print explained variance
+        explained_var = pca.explained_variance_ratio_
+        cumulative_var = np.cumsum(explained_var)
+        
+        print(f"Explained Variance by Component:")
+        for i in range(min(5, len(explained_var))):
+            print(f"  PC{i+1}: {explained_var[i]:.3f} ({explained_var[i]*100:.1f}%)")
+        print(f"  Cumulative (first 3): {cumulative_var[2]:.3f} ({cumulative_var[2]*100:.1f}%)")
+        
+        # Create PCA plots
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         
-        # Average RDF
-        rdf_data = df[rdf_cols].values
-        mean_rdf = np.nanmean(rdf_data, axis=0)
-        std_rdf = np.nanstd(rdf_data, axis=0)
-        
-        bin_centers = np.arange(len(rdf_cols)) + 1
-        
-        axes[0,0].errorbar(bin_centers, mean_rdf, yerr=std_rdf, 
-                          capsize=3, marker='o', alpha=0.7)
-        axes[0,0].set_xlabel('RDF Bin Number')
-        axes[0,0].set_ylabel('RDF Intensity')
-        axes[0,0].set_title('Average Radial Distribution Function')
+        # 1. Explained variance plot
+        axes[0,0].bar(range(1, min(11, len(explained_var)+1)), explained_var[:10])
+        axes[0,0].set_xlabel('Principal Component')
+        axes[0,0].set_ylabel('Explained Variance Ratio')
+        axes[0,0].set_title('PCA Explained Variance')
         axes[0,0].grid(True, alpha=0.3)
         
-        # RDF variance
-        rdf_variance = np.nanvar(rdf_data, axis=0)
-        axes[0,1].bar(bin_centers, rdf_variance, alpha=0.7, color='orange')
-        axes[0,1].set_xlabel('RDF Bin Number')
-        axes[0,1].set_ylabel('RDF Variance')
-        axes[0,1].set_title('RDF Feature Variance')
+        # 2. Cumulative explained variance
+        axes[0,1].plot(range(1, len(cumulative_var)+1), cumulative_var, 'bo-')
+        axes[0,1].axhline(y=0.8, color='r', linestyle='--', label='80%')
+        axes[0,1].axhline(y=0.95, color='orange', linestyle='--', label='95%')
+        axes[0,1].set_xlabel('Number of Components')
+        axes[0,1].set_ylabel('Cumulative Explained Variance')
+        axes[0,1].set_title('Cumulative Explained Variance')
+        axes[0,1].legend()
         axes[0,1].grid(True, alpha=0.3)
         
-        # Correlation with energy
-        if 'energy' in df.columns:
-            correlations = []
-            for col in rdf_cols:
-                data_clean = df[[col, 'energy']].dropna()
-                if len(data_clean) > 5:
-                    corr, _ = pearsonr(data_clean[col], data_clean['energy'])
-                    correlations.append(corr)
-                else:
-                    correlations.append(0)
-            
-            axes[1,0].bar(bin_centers, correlations, alpha=0.7, color='green')
-            axes[1,0].set_xlabel('RDF Bin Number')
-            axes[1,0].set_ylabel('Correlation with Energy')
-            axes[1,0].set_title('RDF-Energy Correlations')
-            axes[1,0].grid(True, alpha=0.3)
-            axes[1,0].axhline(y=0, color='black', linestyle='-', alpha=0.5)
+        # 3. PC1 vs PC2 colored by energy
+        if 'energy' in df_pca.columns and not df_pca['energy'].isna().all():
+            scatter = axes[1,0].scatter(X_pca[:, 0], X_pca[:, 1], 
+                                      c=df_pca['energy'], cmap='viridis', alpha=0.6)
+            axes[1,0].set_xlabel(f'PC1 ({explained_var[0]:.1%} variance)')
+            axes[1,0].set_ylabel(f'PC2 ({explained_var[1]:.1%} variance)')
+            axes[1,0].set_title('PCA: PC1 vs PC2 (colored by energy)')
+            plt.colorbar(scatter, ax=axes[1,0], label='Energy')
+        else:
+            axes[1,0].scatter(X_pca[:, 0], X_pca[:, 1], alpha=0.6)
+            axes[1,0].set_xlabel(f'PC1 ({explained_var[0]:.1%} variance)')
+            axes[1,0].set_ylabel(f'PC2 ({explained_var[1]:.1%} variance)')
+            axes[1,0].set_title('PCA: PC1 vs PC2')
         
-        # RDF heatmap for clusters by size
-        size_groups = df.groupby('n_atoms')
-        if len(size_groups) > 1:
-            size_rdf_means = []
-            size_labels = []
-            
-            for size, group in size_groups:
-                if len(group) >= 3:  # At least 3 samples
-                    group_rdf = group[rdf_cols].mean().values
-                    size_rdf_means.append(group_rdf)
-                    size_labels.append(f'{size} atoms')
-            
-            if len(size_rdf_means) > 1:
-                rdf_matrix = np.array(size_rdf_means)
-                im = axes[1,1].imshow(rdf_matrix, cmap='viridis', aspect='auto')
-                axes[1,1].set_xlabel('RDF Bin Number')
-                axes[1,1].set_ylabel('Cluster Size')
-                axes[1,1].set_title('RDF by Cluster Size')
-                axes[1,1].set_yticks(range(len(size_labels)))
-                axes[1,1].set_yticklabels(size_labels)
-                plt.colorbar(im, ax=axes[1,1], label='RDF Intensity')
+        # 4. Feature loadings for PC1 and PC2
+        loadings = pca.components_[:2].T
+        feature_importance = np.abs(loadings).sum(axis=1)
+        top_features_idx = np.argsort(feature_importance)[-8:]  # Top 8 features
+        
+        for i, idx in enumerate(top_features_idx):
+            axes[1,1].arrow(0, 0, loadings[idx, 0], loadings[idx, 1], 
+                          head_width=0.02, head_length=0.02, fc='red', ec='red')
+            axes[1,1].text(loadings[idx, 0]*1.1, loadings[idx, 1]*1.1, 
+                         X.columns[idx], fontsize=8)
+        
+        axes[1,1].set_xlim(-1, 1)
+        axes[1,1].set_ylim(-1, 1)
+        axes[1,1].set_xlabel('PC1 Loading')
+        axes[1,1].set_ylabel('PC2 Loading')
+        axes[1,1].set_title('Feature Loadings (PC1 vs PC2)')
+        axes[1,1].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(output_dir / 'rdf_analysis.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'pca_analysis.png', dpi=300, bbox_inches='tight')
         plt.close()
+        
+        print(f"PCA analysis plots saved")
+        
+        return pca, X_pca, scaler
     
-    def _plot_geometric_improvements(self, df, output_dir):
-        """Compare old vs new geometric descriptors"""
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    def detect_outliers(self, df, output_dir=None):
+        """Detect and analyze outliers in the dataset"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
         
-        # Anisotropy comparison: old (range-based) vs new (tensor-based)
-        if all(col in df.columns for col in ['anisotropy', 'anisotropy_tensor']):
-            axes[0,0].scatter(df['anisotropy'], df['anisotropy_tensor'], alpha=0.6)
-            axes[0,0].plot([0, df[['anisotropy', 'anisotropy_tensor']].max().max()], 
-                          [0, df[['anisotropy', 'anisotropy_tensor']].max().max()], 'r--', alpha=0.5)
-            axes[0,0].set_xlabel('Range-based Anisotropy (Old)')
-            axes[0,0].set_ylabel('Tensor-based Anisotropy (New)')
-            axes[0,0].set_title('Anisotropy Method Comparison')
-            axes[0,0].grid(True, alpha=0.3)
-        
-        # Surface detection improvement
-        if 'surface_threshold' in df.columns:
-            thresholds = df['surface_threshold'].dropna()
-            if len(thresholds) > 0:
-                axes[0,1].hist(thresholds, bins=10, alpha=0.7, edgecolor='black')
-                axes[0,1].set_xlabel('Surface Detection Threshold')
-                axes[0,1].set_ylabel('Frequency')
-                axes[0,1].set_title('Surface Threshold Distribution')
-                axes[0,1].grid(True, alpha=0.3)
-        
-        # Sphericity vs compactness
-        if all(col in df.columns for col in ['sphericity_index', 'compactness']):
-            axes[0,2].scatter(df['compactness'], df['sphericity_index'], alpha=0.6)
-            axes[0,2].set_xlabel('Compactness (Old)')
-            axes[0,2].set_ylabel('Sphericity Index (New)')
-            axes[0,2].set_title('Shape Descriptor Comparison')
-            axes[0,2].grid(True, alpha=0.3)
-        
-        # Triaxial ratios
-        if all(col in df.columns for col in ['triaxial_c_a', 'triaxial_b_a']):
-            scatter = axes[1,0].scatter(df['triaxial_c_a'], df['triaxial_b_a'], 
-                                      c=df['energy'] if 'energy' in df.columns else 'blue', 
-                                      cmap='viridis', alpha=0.6)
-            axes[1,0].set_xlabel('c/a ratio')
-            axes[1,0].set_ylabel('b/a ratio')
-            axes[1,0].set_title('Triaxial Shape Ratios')
-            axes[1,0].grid(True, alpha=0.3)
-            if 'energy' in df.columns:
-                plt.colorbar(scatter, ax=axes[1,0], label='Energy')
-        
-        # Surface fraction vs coordination
-        if all(col in df.columns for col in ['surface_fraction', 'mean_coordination']):
-            axes[1,1].scatter(df['mean_coordination'], df['surface_fraction'], alpha=0.6)
-            axes[1,1].set_xlabel('Mean Coordination Number')
-            axes[1,1].set_ylabel('Surface Fraction')
-            axes[1,1].set_title('Coordination vs Surface')
-            axes[1,1].grid(True, alpha=0.3)
-        
-        # Feature importance comparison
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        if 'energy' in df.columns and len(numeric_cols) > 5:
-            correlations = []
-            feature_names = []
-            
-            for col in numeric_cols:
-                if col not in ['energy', 'energy_per_atom'] and df[col].notna().sum() > 5:
-                    clean_data = df[[col, 'energy']].dropna()
-                    if len(clean_data) > 5:
-                        corr, _ = pearsonr(clean_data[col], clean_data['energy'])
-                        correlations.append(abs(corr))
-                        feature_names.append(col)
-            
-            if correlations:
-                # Sort by absolute correlation
-                sorted_indices = np.argsort(correlations)[-10:]  # Top 10
-                top_corrs = [correlations[i] for i in sorted_indices]
-                top_features = [feature_names[i] for i in sorted_indices]
-                
-                axes[1,2].barh(range(len(top_corrs)), top_corrs, alpha=0.7)
-                axes[1,2].set_yticks(range(len(top_features)))
-                axes[1,2].set_yticklabels([f.replace('_', ' ') for f in top_features], fontsize=8)
-                axes[1,2].set_xlabel('|Correlation with Energy|')
-                axes[1,2].set_title('Top Feature Correlations')
-                axes[1,2].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(output_dir / 'geometric_improvements.png', dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    def _plot_soap_analysis(self, df, output_dir):
-        """Plot SOAP PCA analysis"""
-        if not self.soap_features:
-            return
-        
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        
-        # SOAP PCA explained variance
-        if hasattr(self, 'soap_pca_info'):
-            pca_info = self.soap_pca_info
-            explained_var = pca_info['pca'].explained_variance_ratio_
-            
-            axes[0,0].bar(range(1, len(explained_var)+1), explained_var, alpha=0.7)
-            axes[0,0].set_xlabel('SOAP PCA Component')
-            axes[0,0].set_ylabel('Explained Variance Ratio')
-            axes[0,0].set_title(f'SOAP PCA Components\n(Total: {pca_info["explained_variance"]:.3f} variance)')
-            axes[0,0].grid(True, alpha=0.3)
-            
-            # Cumulative variance
-            cumsum = np.cumsum(explained_var)
-            axes[0,1].plot(range(1, len(cumsum)+1), cumsum, 'bo-', alpha=0.7)
-            axes[0,1].axhline(y=0.95, color='red', linestyle='--', label='95%')
-            axes[0,1].set_xlabel('Number of Components')
-            axes[0,1].set_ylabel('Cumulative Explained Variance')
-            axes[0,1].set_title('SOAP PCA Cumulative Variance')
-            axes[0,1].legend()
-            axes[0,1].grid(True, alpha=0.3)
-        
-        # SOAP features vs energy
-        if 'energy' in df.columns and len(self.soap_features) >= 2:
-            pc1 = self.soap_features[0]
-            pc2 = self.soap_features[1]
-            
-            if all(col in df.columns for col in [pc1, pc2]):
-                scatter = axes[1,0].scatter(df[pc1], df[pc2], c=df['energy'], 
-                                          cmap='viridis', alpha=0.6)
-                axes[1,0].set_xlabel(f'{pc1}')
-                axes[1,0].set_ylabel(f'{pc2}')
-                axes[1,0].set_title('SOAP PC1 vs PC2 (Energy Colored)')
-                plt.colorbar(scatter, ax=axes[1,0], label='Energy')
-        
-        # SOAP feature correlations with energy
-        if 'energy' in df.columns:
-            correlations = []
-            soap_names = []
-            
-            for soap_col in self.soap_features[:10]:  # Top 10 components
-                if soap_col in df.columns:
-                    clean_data = df[[soap_col, 'energy']].dropna()
-                    if len(clean_data) > 5:
-                        corr, _ = pearsonr(clean_data[soap_col], clean_data['energy'])
-                        correlations.append(corr)
-                        soap_names.append(soap_col.replace('soap_pc_', 'PC'))
-            
-            if correlations:
-                axes[1,1].bar(range(len(correlations)), correlations, alpha=0.7)
-                axes[1,1].set_xlabel('SOAP Component')
-                axes[1,1].set_ylabel('Correlation with Energy')
-                axes[1,1].set_title('SOAP-Energy Correlations')
-                axes[1,1].set_xticks(range(len(soap_names)))
-                axes[1,1].set_xticklabels(soap_names, rotation=45)
-                axes[1,1].grid(True, alpha=0.3)
-                axes[1,1].axhline(y=0, color='black', linestyle='-', alpha=0.5)
-        
-        plt.tight_layout()
-        plt.savefig(output_dir / 'soap_analysis.png', dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    def save_enhanced_results(self, df, output_dir):
-        """Save all enhanced results"""
-        output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True)
         
-        # Save main descriptors
-        df.to_csv(output_dir / 'enhanced_descriptors.csv', index=False)
+        print("\n" + "="*60)
+        print("OUTLIER & VARIABILITY ANALYSIS")
+        print("="*60)
         
-        # Save SOAP PCA info if available
-        if hasattr(self, 'soap_pca_info'):
-            import json
-            soap_info = {
-                'n_components': self.soap_pca_info['n_components'],
-                'explained_variance': self.soap_pca_info['explained_variance'],
-                'component_names': self.soap_features
-            }
-            with open(output_dir / 'soap_pca_info.json', 'w') as f:
-                json.dump(soap_info, f, indent=2)
+        # Select key features for outlier analysis
+        key_features = ['mean_bond_length', 'mean_coordination', 'radius_of_gyration', 
+                       'asphericity', 'surface_fraction', 'anisotropy']
         
-        # Save improvement summary
-        improvements = {
-            'surface_detection': f'Using {self.surface_threshold_mode} method',
-            'anisotropy': 'Tensor-based (outlier resistant)',
-            'sphericity': 'Volume-equivalent sphere ratio',
-            'rdf_features': f'{len([c for c in df.columns if c.startswith("rdf_")])} bins',
-            'soap_features': f'{len(self.soap_features) if self.soap_features else 0} PCA components',
-            'outlier_detection': 'Multivariate (Mahalanobis + Isolation Forest)',
-            'feature_scaling': 'Z-score standardization for correlations'
+        available_features = [f for f in key_features if f in df.columns]
+        
+        outliers_info = []
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+        
+        for i, feature in enumerate(available_features[:6]):
+            data = df[feature].dropna()
+            
+            if len(data) > 4:
+                # Calculate IQR-based outliers
+                Q1 = data.quantile(0.25)
+                Q3 = data.quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                
+                # Identify outliers
+                outliers = data[(data < lower_bound) | (data > upper_bound)]
+                outlier_indices = df[df[feature].isin(outliers)].index
+                
+                # Store outlier info
+                if len(outliers) > 0:
+                    outliers_info.append({
+                        'feature': feature,
+                        'n_outliers': len(outliers),
+                        'outlier_files': df.loc[outlier_indices, 'filename'].tolist()
+                    })
+                
+                # Box plot
+                axes[i].boxplot(data, labels=[feature.replace('_', '\n')])
+                axes[i].set_title(f'{feature}\n{len(outliers)} outliers')
+                axes[i].grid(True, alpha=0.3)
+                
+                # Highlight outliers
+                if len(outliers) > 0:
+                    axes[i].scatter([1]*len(outliers), outliers, color='red', s=50, alpha=0.7, label='Outliers')
+                    axes[i].legend()
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'outlier_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Print outlier summary
+        if outliers_info:
+            print("\nOutlier Summary:")
+            print("-" * 50)
+            for info in outliers_info:
+                print(f"{info['feature']:<20} | {info['n_outliers']} outliers")
+                if info['n_outliers'] <= 5:  # Show filenames for small number of outliers
+                    for filename in info['outlier_files']:
+                        print(f"  → {filename}")
+        else:
+            print("No significant outliers detected using IQR method")
+        
+        print(f"Outlier analysis plots saved")
+        
+        return outliers_info
+    
+    def create_advanced_correlation_heatmap(self, df, output_dir=None):
+        """Create enhanced correlation heatmap"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # Select numeric columns
+        numeric_df = df.select_dtypes(include=[np.number])
+        
+        # Remove columns with too many NaN values
+        numeric_df = numeric_df.dropna(axis=1, thresh=len(numeric_df)*0.5)
+        
+        if numeric_df.shape[1] < 2:
+            print("Not enough numeric columns for correlation plot")
+            return None
+        
+        plt.figure(figsize=(12, 10))
+        
+        # Compute correlation matrix
+        corr_matrix = numeric_df.corr()
+        
+        # Create mask for upper triangle
+        mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+        
+        # Plot heatmap
+        sns.heatmap(corr_matrix, 
+                   mask=mask,
+                   annot=True, 
+                   cmap='RdBu_r', 
+                   center=0,
+                   square=True,
+                   fmt='.2f',
+                   cbar_kws={'label': 'Correlation Coefficient'})
+        
+        plt.title('Enhanced Feature Correlation Heatmap', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(output_dir / 'enhanced_correlation_heatmap.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Enhanced correlation heatmap saved")
+        
+    def run_advanced_analysis(self, df, output_dir=None):
+        """Run all advanced analysis features - COMPLETE VERSION"""
+        print("\n🔬 Running COMPLETE Advanced Analysis Features...")
+        
+        if output_dir is None:
+            output_dir = Path('./advanced_analysis')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # 1. Feature-Target Relationship Analysis
+        print("\n1️⃣ Analyzing Feature-Target Relationships...")
+        corr_df = self.analyze_feature_target_relationships(df)
+        if corr_df is not None:
+            corr_df.to_csv(output_dir / 'feature_correlations.csv', index=False)
+            self.create_feature_target_plots(df, corr_df, output_dir=output_dir)
+        
+        # 2. Enhanced Correlation Heatmap
+        print("\n2️⃣ Creating Enhanced Correlation Heatmap...")
+        corr_matrix = self.create_advanced_correlation_heatmap(df, output_dir=output_dir)
+        
+        # 3. PCA Analysis (Dimensionality Reduction)
+        print("\n3️⃣ Performing PCA Analysis...")
+        pca_results = self.perform_pca_analysis(df, output_dir=output_dir)
+        
+        # 4. Outlier Detection
+        print("\n4️⃣ Detecting Outliers...")
+        outliers_info = self.detect_outliers(df, output_dir=output_dir)
+        
+        # 5. Save outlier info to CSV
+        if outliers_info:
+            outlier_df = pd.DataFrame(outliers_info)
+            outlier_df.to_csv(output_dir / 'outlier_summary.csv', index=False)
+        
+        print(f"\n✅ COMPLETE Advanced analysis finished! Results saved to: {output_dir}")
+        print(f"📊 Generated files:")
+        print(f"  - feature_correlations.csv: Feature-energy correlations")
+        print(f"  - feature_target_relationships.png: Scatter plots")
+        print(f"  - enhanced_correlation_heatmap.png: Full correlation matrix")
+        print(f"  - pca_analysis.png: PCA visualizations")
+        print(f"  - outlier_analysis.png: Outlier detection plots")
+        if outliers_info:
+            print(f"  - outlier_summary.csv: Outlier summary table")
+        
+        return {
+            'correlations': corr_df,
+            'correlation_matrix': corr_matrix,
+            'pca_results': pca_results,
+            'outliers': outliers_info
         }
+    
+    def compute_descriptors(self):
+        """Compute all descriptors for parsed structures using ASE"""
+        descriptors = []
         
-        with open(output_dir / 'improvements_summary.json', 'w') as f:
-            json.dump(improvements, f, indent=2)
+        print(f"Computing ASE-enhanced descriptors for {len(self.structures)} structures...")
         
-        print(f"Enhanced results saved to {output_dir}")
-        return improvements
+        for structure in self.structures:
+            atoms = structure['atoms']
+            
+            # Basic properties
+            desc = {
+                'filename': structure['filename'],
+                'n_atoms': structure['n_atoms'],
+                'energy': structure['energy'],
+                'energy_per_atom': structure['energy'] / structure['n_atoms'] if structure['energy'] else None
+            }
+            
+            # ASE-enhanced bond statistics
+            bonds = self.compute_bond_lengths_ase(atoms)  # Fixed: use ASE version
+            if len(bonds) > 0:
+                desc.update({
+                    'mean_bond_length': np.mean(bonds),
+                    'std_bond_length': np.std(bonds),
+                    'min_bond_length': np.min(bonds),
+                    'max_bond_length': np.max(bonds),
+                    'n_bonds': len(bonds)
+                })
+            else:
+                desc.update({
+                    'mean_bond_length': None,
+                    'std_bond_length': None,
+                    'min_bond_length': None,
+                    'max_bond_length': None,
+                    'n_bonds': 0
+                })
+            
+            # ASE-enhanced coordination statistics
+            coord_nums = self.compute_coordination_numbers_ase(atoms)  # Fixed: use ASE version
+            desc.update({
+                'mean_coordination': np.mean(coord_nums),
+                'std_coordination': np.std(coord_nums),
+                'max_coordination': np.max(coord_nums),
+                'min_coordination': np.min(coord_nums)
+            })
+            
+            # ASE-enhanced geometric properties
+            desc.update({
+                'radius_of_gyration': self.compute_radius_of_gyration_ase(atoms),  # Fixed: use ASE version
+                'asphericity': self.compute_asphericity_ase(atoms),  # Fixed: use ASE version
+                'surface_fraction': self.compute_surface_atoms_ase(atoms)  # Fixed: use ASE version
+            })
+            
+            # Advanced descriptors
+            advanced_desc = self.compute_advanced_descriptors(atoms)
+            desc.update(advanced_desc)
+            
+            descriptors.append(desc)
+        
+        return pd.DataFrame(descriptors)
+    
+    def generate_statistics(self, df):
+        """Generate statistical summary"""
+        print("\n" + "="*60)
+        print("STATISTICAL SUMMARY")
+        print("="*60)
+        
+        # Dataset overview
+        print(f"\nDataset Overview:")
+        print(f"  Total structures: {len(df)}")
+        print(f"  Structures with energy: {df['energy'].notna().sum()}")
+        
+        # Size distribution
+        print(f"\nSize Distribution:")
+        print(f"  Atoms per cluster: {df['n_atoms'].min()} - {df['n_atoms'].max()}")
+        print(f"  Average size: {df['n_atoms'].mean():.1f} atoms")
+        
+        # Energy statistics
+        if df['energy'].notna().sum() > 0:
+            energies = df['energy'].dropna()
+            print(f"\nEnergy Statistics:")
+            print(f"  Total energy range: {energies.min():.2f} to {energies.max():.2f} eV")
+            print(f"  Average total energy: {energies.mean():.2f} eV")
+            
+            if df['energy_per_atom'].notna().sum() > 0:
+                energy_per_atom = df['energy_per_atom'].dropna()
+                print(f"  Energy per atom range: {energy_per_atom.min():.2f} to {energy_per_atom.max():.2f} eV/atom")
+                print(f"  Average energy per atom: {energy_per_atom.mean():.2f} eV/atom")
+        
+        # Structural statistics
+        print(f"\nStructural Properties:")
+        if df['mean_bond_length'].notna().sum() > 0:
+            bond_lengths = df['mean_bond_length'].dropna()
+            print(f"  Bond lengths: {bond_lengths.min():.3f} - {bond_lengths.max():.3f} Å (avg: {bond_lengths.mean():.3f})")
+        
+        coord_nums = df['mean_coordination'].dropna()
+        print(f"  Coordination numbers: {coord_nums.min():.1f} - {coord_nums.max():.1f} (avg: {coord_nums.mean():.1f})")
+        
+        rg_values = df['radius_of_gyration'].dropna()
+        print(f"  Radius of gyration: {rg_values.min():.2f} - {rg_values.max():.2f} Å (avg: {rg_values.mean():.2f})")
+        
+        surface_fractions = df['surface_fraction'].dropna()
+        print(f"  Surface fraction: {surface_fractions.min():.2f} - {surface_fractions.max():.2f} (avg: {surface_fractions.mean():.2f})")
+        
+        return df.describe()
+    
+    def create_plots(self, df, output_dir=None):
+        """Generate basic plots"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # Set style
+        plt.style.use('default')
+        sns.set_palette("husl")
+        
+        # 1. Energy vs Size plot
+        if df['energy'].notna().sum() > 1:
+            plt.figure(figsize=(10, 6))
+            valid_data = df.dropna(subset=['energy', 'n_atoms'])
+            plt.scatter(valid_data['n_atoms'], valid_data['energy'], alpha=0.7, s=50)
+            plt.xlabel('Number of Atoms')
+            plt.ylabel('Total Energy (eV)')
+            plt.title('Energy vs Cluster Size')
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(output_dir / 'energy_vs_size.png', dpi=300)
+            plt.close()
+        
+        # 2. Key descriptors distribution
+        key_features = ['mean_bond_length', 'mean_coordination', 'radius_of_gyration', 'surface_fraction']
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        axes = axes.flatten()
+        
+        for i, feature in enumerate(key_features):
+            if feature in df.columns and df[feature].notna().sum() > 0:
+                data = df[feature].dropna()
+                axes[i].hist(data, bins=20, alpha=0.7, edgecolor='black')
+                axes[i].set_title(f'{feature.replace("_", " ").title()}')
+                axes[i].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'descriptors_distribution.png', dpi=300)
+        plt.close()
+        
+        # 3. Correlation heatmap
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 1:
+            plt.figure(figsize=(10, 8))
+            corr_matrix = df[numeric_cols].corr()
+            sns.heatmap(corr_matrix, annot=True, cmap='RdBu_r', center=0, fmt='.2f')
+            plt.title('Feature Correlation Matrix')
+            plt.tight_layout()
+            plt.savefig(output_dir / 'correlation_heatmap.png', dpi=300)
+            plt.close()
+        
+        print(f"Plots saved to {output_dir}")
+    
+    def save_results(self, df, output_dir=None):
+        """Save results to files"""
+        if output_dir is None:
+            output_dir = Path('./results')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # Save descriptors CSV (computed features)
+        df.to_csv(output_dir / 'descriptors.csv', index=False)
+        
+        # Save raw data with coordinates (enhanced with ASE data)
+        raw_data = []
+        for structure in self.structures:
+            atoms = structure['atoms']
+            coords = atoms.get_positions()
+            elements = atoms.get_chemical_symbols()
+            
+            for i, (coord, element) in enumerate(zip(coords, elements)):
+                raw_data.append({
+                    'filename': structure['filename'],
+                    'n_atoms': structure['n_atoms'],
+                    'energy': structure['energy'],
+                    'atom_index': i + 1,
+                    'element': element,
+                    'x': coord[0],
+                    'y': coord[1],
+                    'z': coord[2]
+                })
+        
+        raw_df = pd.DataFrame(raw_data)
+        raw_df.to_csv(output_dir / 'raw_coordinates.csv', index=False)
+        
+        # Save summary statistics
+        summary_stats = df.describe()
+        summary_stats.to_csv(output_dir / 'summary_statistics.csv')
+        
+        # Save structure summary (one row per file)
+        structure_summary = []
+        for structure in self.structures:
+            structure_summary.append({
+                'filename': structure['filename'],
+                'n_atoms': structure['n_atoms'],
+                'energy': structure['energy'],
+                'energy_per_atom': structure['energy'] / structure['n_atoms'] if structure['energy'] else None
+            })
+        
+        summary_df = pd.DataFrame(structure_summary)
+        summary_df.to_csv(output_dir / 'structure_summary.csv', index=False)
+        
+    def analyze_feature_target_relationships(self, df, target_col='energy'):
+        """Analyze correlations between features and target variable"""
+        if target_col not in df.columns or df[target_col].isna().all():
+            print(f"Target column '{target_col}' not available for correlation analysis")
+            return None
+            
+        print("\n" + "="*60)
+        print("FEATURE-TARGET RELATIONSHIP ANALYSIS")
+        print("="*60)
+        
+        # Select numeric features (excluding target and identifiers)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        feature_cols = [col for col in numeric_cols if col not in [target_col, 'energy_per_atom']]
+        
+        # Remove rows with missing target values
+        df_clean = df.dropna(subset=[target_col])
+        
+        correlations = []
+        
+        for feature in feature_cols:
+            if df_clean[feature].notna().sum() > 5:  # Need at least 5 data points
+                # Remove missing values for this feature
+                mask = df_clean[feature].notna() & df_clean[target_col].notna()
+                if mask.sum() < 5:
+                    continue
+                    
+                x = df_clean.loc[mask, feature]
+                y = df_clean.loc[mask, target_col]
+                
+                # Pearson correlation
+                pearson_r, pearson_p = pearsonr(x, y)
+                
+                # Spearman correlation  
+                spearman_r, spearman_p = spearmanr(x, y)
+                
+                correlations.append({
+                    'feature': feature,
+                    'pearson_r': pearson_r,
+                    'pearson_p': pearson_p,
+                    'spearman_r': spearman_r,
+                    'spearman_p': spearman_p,
+                    'abs_pearson': abs(pearson_r),
+                    'n_samples': mask.sum()
+                })
+        
+        corr_df = pd.DataFrame(correlations)
+        corr_df = corr_df.sort_values('abs_pearson', ascending=False)
+        
+        print(f"\nTop 10 Features by Correlation with {target_col}:")
+        print("-" * 80)
+        for _, row in corr_df.head(10).iterrows():
+            significance = "**" if row['pearson_p'] < 0.01 else "*" if row['pearson_p'] < 0.05 else ""
+            print(f"{row['feature']:<25} | Pearson: {row['pearson_r']:.3f}{significance} | Spearman: {row['spearman_r']:.3f} | n={row['n_samples']}")
+        
+        print("\n** p < 0.01, * p < 0.05")
+        
+        return corr_df
+    
+    def create_feature_target_plots(self, df, corr_df, target_col='energy', output_dir=None):
+        """Create scatter plots of key features vs target"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        # Get top 6 features for plotting
+        top_features = corr_df.head(6)['feature'].tolist()
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+        
+        df_clean = df.dropna(subset=[target_col])
+        
+        for i, feature in enumerate(top_features):
+            if i >= 6:
+                break
+                
+            # Get clean data for this feature
+            mask = df_clean[feature].notna() & df_clean[target_col].notna()
+            x = df_clean.loc[mask, feature]
+            y = df_clean.loc[mask, target_col]
+            
+            if len(x) < 2:
+                continue
+            
+            # Scatter plot
+            axes[i].scatter(x, y, alpha=0.6, s=50)
+            
+            # Add trend line
+            z = np.polyfit(x, y, 1)
+            p = np.poly1d(z)
+            axes[i].plot(x.sort_values(), p(x.sort_values()), "r--", alpha=0.8)
+            
+            # Get correlation for this feature
+            corr_row = corr_df[corr_df['feature'] == feature].iloc[0]
+            r_val = corr_row['pearson_r']
+            
+            axes[i].set_xlabel(feature.replace('_', ' ').title())
+            axes[i].set_ylabel(target_col.replace('_', ' ').title())
+            axes[i].set_title(f'{feature}\nr = {r_val:.3f}')
+            axes[i].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'feature_target_relationships.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Feature-target relationship plots saved")
+    
+    def analyze_feature_distributions(self, df, output_dir=None):
+        """Analyze and visualize feature distributions"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        print("\n" + "="*60)
+        print("FEATURE DISTRIBUTION ANALYSIS")
+        print("="*60)
+        
+        # Select key structural features
+        key_features = [
+            'mean_bond_length', 'mean_coordination', 'radius_of_gyration', 
+            'asphericity', 'surface_fraction', 'anisotropy'
+        ]
+        
+        # Filter available features
+        available_features = [f for f in key_features if f in df.columns]
+        
+        # Create distribution plots
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+        
+        for i, feature in enumerate(available_features[:6]):
+            data = df[feature].dropna()
+            
+            if len(data) > 1:
+                # Histogram with KDE
+                axes[i].hist(data, bins=20, alpha=0.7, density=True, edgecolor='black')
+                
+                # Add statistics
+                mean_val = data.mean()
+                std_val = data.std()
+                median_val = data.median()
+                
+                axes[i].axvline(mean_val, color='red', linestyle='--', label=f'Mean: {mean_val:.3f}')
+                axes[i].axvline(median_val, color='blue', linestyle=':', label=f'Median: {median_val:.3f}')
+                
+                axes[i].set_xlabel(feature.replace('_', ' ').title())
+                axes[i].set_ylabel('Density')
+                axes[i].set_title(f'{feature}\nσ = {std_val:.3f}')
+                axes[i].legend()
+                axes[i].grid(True, alpha=0.3)
+                
+                # Print distribution stats
+                print(f"{feature:<20} | Mean: {mean_val:.3f} | Std: {std_val:.3f} | Range: [{data.min():.3f}, {data.max():.3f}]")
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'feature_distributions.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Feature distribution plots saved")
+    
+    def perform_pca_analysis(self, df, output_dir=None):
+        """Perform PCA analysis and visualization"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        print("\n" + "="*60)
+        print("PRINCIPAL COMPONENT ANALYSIS")
+        print("="*60)
+        
+        # Select numeric features (excluding identifiers and target)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        feature_cols = [col for col in numeric_cols if col not in ['energy', 'energy_per_atom']]
+        
+        # Prepare data
+        df_pca = df[feature_cols + ['energy']].dropna()
+        
+        if len(df_pca) < 5:
+            print("Not enough samples for PCA analysis")
+            return None
+        
+        X = df_pca[feature_cols]
+        
+        # Standardize features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Perform PCA
+        pca = PCA()
+        X_pca = pca.fit_transform(X_scaled)
+        
+        # Print explained variance
+        explained_var = pca.explained_variance_ratio_
+        cumulative_var = np.cumsum(explained_var)
+        
+        print(f"Explained Variance by Component:")
+        for i in range(min(5, len(explained_var))):
+            print(f"  PC{i+1}: {explained_var[i]:.3f} ({explained_var[i]*100:.1f}%)")
+        print(f"  Cumulative (first 3): {cumulative_var[2]:.3f} ({cumulative_var[2]*100:.1f}%)")
+        
+        # Create PCA plots
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # 1. Explained variance plot
+        axes[0,0].bar(range(1, min(11, len(explained_var)+1)), explained_var[:10])
+        axes[0,0].set_xlabel('Principal Component')
+        axes[0,0].set_ylabel('Explained Variance Ratio')
+        axes[0,0].set_title('PCA Explained Variance')
+        axes[0,0].grid(True, alpha=0.3)
+        
+        # 2. Cumulative explained variance
+        axes[0,1].plot(range(1, len(cumulative_var)+1), cumulative_var, 'bo-')
+        axes[0,1].axhline(y=0.8, color='r', linestyle='--', label='80%')
+        axes[0,1].axhline(y=0.95, color='orange', linestyle='--', label='95%')
+        axes[0,1].set_xlabel('Number of Components')
+        axes[0,1].set_ylabel('Cumulative Explained Variance')
+        axes[0,1].set_title('Cumulative Explained Variance')
+        axes[0,1].legend()
+        axes[0,1].grid(True, alpha=0.3)
+        
+        # 3. PC1 vs PC2 colored by energy
+        if 'energy' in df_pca.columns and not df_pca['energy'].isna().all():
+            scatter = axes[1,0].scatter(X_pca[:, 0], X_pca[:, 1], 
+                                      c=df_pca['energy'], cmap='viridis', alpha=0.6)
+            axes[1,0].set_xlabel(f'PC1 ({explained_var[0]:.1%} variance)')
+            axes[1,0].set_ylabel(f'PC2 ({explained_var[1]:.1%} variance)')
+            axes[1,0].set_title('PCA: PC1 vs PC2 (colored by energy)')
+            plt.colorbar(scatter, ax=axes[1,0], label='Energy')
+        else:
+            axes[1,0].scatter(X_pca[:, 0], X_pca[:, 1], alpha=0.6)
+            axes[1,0].set_xlabel(f'PC1 ({explained_var[0]:.1%} variance)')
+            axes[1,0].set_ylabel(f'PC2 ({explained_var[1]:.1%} variance)')
+            axes[1,0].set_title('PCA: PC1 vs PC2')
+        
+        # 4. Feature loadings for PC1 and PC2
+        loadings = pca.components_[:2].T
+        feature_importance = np.abs(loadings).sum(axis=1)
+        top_features_idx = np.argsort(feature_importance)[-8:]  # Top 8 features
+        
+        for i, idx in enumerate(top_features_idx):
+            axes[1,1].arrow(0, 0, loadings[idx, 0], loadings[idx, 1], 
+                          head_width=0.02, head_length=0.02, fc='red', ec='red')
+            axes[1,1].text(loadings[idx, 0]*1.1, loadings[idx, 1]*1.1, 
+                         feature_cols[idx], fontsize=8)
+        
+        axes[1,1].set_xlim(-1, 1)
+        axes[1,1].set_ylim(-1, 1)
+        axes[1,1].set_xlabel('PC1 Loading')
+        axes[1,1].set_ylabel('PC2 Loading')
+        axes[1,1].set_title('Feature Loadings (PC1 vs PC2)')
+        axes[1,1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'pca_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"PCA analysis plots saved")
+        
+        return pca, X_pca, scaler
+    
+    def detect_outliers(self, df, output_dir=None):
+        """Detect and analyze outliers in the dataset"""
+        if output_dir is None:
+            output_dir = Path('./plots')
+        else:
+            output_dir = Path(output_dir)
+        
+        output_dir.mkdir(exist_ok=True)
+        
+        print("\n" + "="*60)
+        print("OUTLIER & VARIABILITY ANALYSIS")
+        print("="*60)
+        
+        # Select key features for outlier analysis
+        key_features = ['mean_bond_length', 'mean_coordination', 'radius_of_gyration', 
+                       'asphericity', 'surface_fraction', 'anisotropy']
+        
+        available_features = [f for f in key_features if f in df.columns]
+        
+        outliers_info = []
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+        
+        for i, feature in enumerate(available_features[:6]):
+            data = df[feature].dropna()
+            
+            if len(data) > 4:
+                # Calculate IQR-based outliers
+                Q1 = data.quantile(0.25)
+                Q3 = data.quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                
+                # Identify outliers
+                outliers = data[(data < lower_bound) | (data > upper_bound)]
+                outlier_indices = df[df[feature].isin(outliers)].index
+                
+                # Store outlier info
+                if len(outliers) > 0:
+                    outliers_info.append({
+                        'feature': feature,
+                        'n_outliers': len(outliers),
+                        'outlier_files': df.loc[outlier_indices, 'filename'].tolist()
+                    })
+                
+                # Box plot
+                axes[i].boxplot(data, labels=[feature.replace('_', '\n')])
+                axes[i].set_title(f'{feature}\n{len(outliers)} outliers')
+                axes[i].grid(True, alpha=0.3)
+                
+                # Highlight outliers
+                if len(outliers) > 0:
+                    axes[i].scatter([1]*len(outliers), outliers, color='red', s=50, alpha=0.7, label='Outliers')
+                    axes[i].legend()
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'outlier_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Print outlier summary
+        if outliers_info:
+            print("\nOutlier Summary:")
+            print("-" * 50)
+            for info in outliers_info:
+                print(f"{info['feature']:<20} | {info['n_outliers']} outliers")
+                if info['n_outliers'] <= 5:  # Show filenames for small number of outliers
+                    for filename in info['outlier_files']:
+                        print(f"  → {filename}")
+        else:
+            print("No significant outliers detected using IQR method")
+        
+        print(f"Outlier analysis plots saved")
+        
+        return outliers_info
 
 def main():
-    """Main execution with improvements"""
-    print("🔬 IMPROVED Au Cluster Analysis with Enhanced Descriptors")
-    print("="*70)
-    print("Key Improvements:")
-    print("✅ Bulk reference surface detection (robust for all sizes)")
-    print("✅ Gyration tensor anisotropy (outlier-resistant)")
-    print("✅ RDF features (richer local environment)")
-    print("✅ Sphericity index (better than compactness)")
-    print("✅ SOAP descriptors with PCA (95% variance)")
-    print("✅ Multivariate outlier detection")
-    print("✅ Standardized correlation analysis")
-    print("="*70)
-    
-    # Get data directory
+    """Main execution function"""
+    # Example usage - set default to your data path
     print("Default path: /Users/wilbert/Documents/GitHub/AIAC/data/Au20_OPT_1000")
     data_dir = input("Enter path to xyz files directory (press Enter for default): ").strip()
     if not data_dir:
-        data_dir = "/Users/wilbert/Documents/GitHub/AIAC/data/Au20_OPT_1000"
+        data_dir = "/Users/wilbert/Documents/GitHub/AIAC/data/Au20_OPT_1000"  # Your data path
     
     print(f"Using directory: {data_dir}")
     
-    # Initialize improved analyzer
-    analyzer = ImprovedAuClusterAnalyzer(data_dir, surface_threshold_mode='bulk_reference')
+    # Initialize analyzer
+    analyzer = AuClusterAnalyzer(data_dir)
     
     # Parse files
     analyzer.parse_all_files()
     
     if not analyzer.structures:
         print("No structures were successfully parsed!")
-        return None
+        print("Please check:")
+        print("1. Directory path is correct")
+        print("2. Directory contains .xyz files")
+        print("3. .xyz files are properly formatted")
+        return None  # Return None explicitly
     
-    # Compute enhanced descriptors
+    # Compute descriptors
     df = analyzer.compute_descriptors()
     
-    # Detect multivariate outliers
-    df = analyzer.detect_multivariate_outliers(df, method='both')
+    # Generate basic statistics
+    summary_stats = analyzer.generate_statistics(df)
     
-    # Standardized correlation analysis
-    corr_df = analyzer.analyze_feature_correlations_standardized(df)
-    
-    # Create output directory
-    output_dir = Path('./improved_au_analysis_results')
+    # Create output directories
+    output_dir = Path('./au_cluster_analysis_results')
     output_dir.mkdir(exist_ok=True)
     
-    # Save enhanced results
-    improvements = analyzer.save_enhanced_results(df, output_dir)
+    # Save basic results
+    analyzer.save_results(df, output_dir)
     
-    # Create enhanced visualizations
-    analyzer.create_enhanced_visualizations(df, output_dir / 'enhanced_plots')
+    # Create basic plots
+    analyzer.create_plots(df, output_dir)
     
-    # Save correlation results
-    if corr_df is not None:
-        corr_df.to_csv(output_dir / 'standardized_correlations.csv', index=False)
+    # Run advanced analysis
+    advanced_results = analyzer.run_advanced_analysis(df, output_dir / 'advanced')
     
-    print(f"\n🎉 IMPROVED analysis complete!")
-    print(f"📁 Results saved to: {output_dir}")
+    print(f"\n🎉 Complete analysis finished!")
+    print(f"📁 Basic results: {output_dir}")
+    print(f"🔬 Advanced analysis: {output_dir / 'advanced'}")
     
-    # Print key improvements achieved
-    print(f"\n💡 Improvements Summary:")
-    for key, value in improvements.items():
-        print(f"  • {key.replace('_', ' ').title()}: {value}")
-    
-    if corr_df is not None:
-        print(f"\n🔍 Top 3 Standardized Correlations with Energy:")
-        for _, row in corr_df.head(3).iterrows():
-            print(f"  • {row['feature']}: r = {row['pearson_r']:.3f}")
-    
-    # Outlier summary
-    outlier_methods = ['mahalanobis', 'isolation_forest']
-    print(f"\n🚨 Outlier Detection Summary:")
-    for method in outlier_methods:
-        outlier_col = f'{method}_outlier'
-        if outlier_col in df.columns:
-            n_outliers = df[outlier_col].sum()
-            percentage = n_outliers / len(df) * 100
-            print(f"  • {method.title()}: {n_outliers} outliers ({percentage:.1f}%)")
-    
-    return df, analyzer, corr_df
+    return df, analyzer, advanced_results
 
 if __name__ == "__main__":
     result = main()
     if result is not None:
-        df, analyzer, corr_df = result
-        print("\n✅ Improved analysis completed successfully!")
+        df, analyzer, advanced_results = result
+        print("Analysis completed successfully!")
+        
+        # Print key findings
+        if advanced_results['correlations'] is not None:
+            top_corr = advanced_results['correlations'].head(3)
+            print(f"\n🔍 Key Findings:")
+            print(f"Top 3 features correlated with energy:")
+            for _, row in top_corr.iterrows():
+                print(f"  • {row['feature']}: r = {row['pearson_r']:.3f}")
     else:
-        print("\n❌ Analysis failed - no data to process")
+        print("Analysis failed - no data to process")
