@@ -96,9 +96,9 @@ class RobustTreeAnalyzer:
                 name='random_forest',
                 model_class=RandomForestRegressor,
                 param_grid={
-                    'n_estimators': [100, 200],
+                    'n_estimators': [200, 500, 800],
                     'max_depth': [10, 20, None],
-                    'min_samples_split': [2, 5],
+                    'min_samples_split': [2, 5, 10],
                     'max_features': ['sqrt', 'log2']
                 },
                 is_available=True
@@ -110,10 +110,12 @@ class RobustTreeAnalyzer:
                 name='xgboost',
                 model_class=xgb.XGBRegressor,
                 param_grid={
-                    'n_estimators': [100, 200],
+                    'n_estimators': [200, 500],
                     'max_depth': [3, 6, 10],
-                    'learning_rate': [0.1, 0.2],
-                    'subsample': [0.8, 1.0]
+                    'learning_rate': [0.05, 0.1],
+                    'subsample': [0.8, 1.0],
+                    'colsample_bytree': [0.8, 1.0],
+                    'reg_lambda': [1, 5]
                 },
                 is_available=True
             )
@@ -125,10 +127,12 @@ class RobustTreeAnalyzer:
                 name='lightgbm',
                 model_class=lgb.LGBMRegressor,
                 param_grid={
-                    'n_estimators': [100, 200],
-                    'max_depth': [3, 6, 10],
-                    'learning_rate': [0.1, 0.2],
-                    'num_leaves': [31, 63]
+                    'n_estimators': [200, 500],
+                    'max_depth': [6, 10, -1],
+                    'learning_rate': [0.05, 0.1],
+                    'num_leaves': [31, 63, 127],
+                    'feature_fraction': [0.8, 1.0],
+                    'min_child_samples': [10, 20]
                 },
                 is_available=True
             )
@@ -290,19 +294,22 @@ class RobustTreeAnalyzer:
             
             # Hyperparameter optimization
             if limited_params:
-                grid_search = GridSearchCV(
-                    model, 
+                from sklearn.model_selection import RandomizedSearchCV
+                search = RandomizedSearchCV(
+                    model,
                     limited_params,
-                    cv=min(self.config.cv_folds, 3),  # Limit CV for speed
+                    n_iter=min(20, self.config.max_param_combinations),
+                    cv=min(self.config.cv_folds, 3),
                     scoring='r2',
-                    n_jobs=min(self.config.n_jobs, 2),  # Limit parallel jobs
-                    error_score='raise'
+                    n_jobs=min(self.config.n_jobs, 2),
+                    error_score='raise',
+                    random_state=self.config.random_state
                 )
                 
-                grid_search.fit(X_train, y_train)
-                best_model = grid_search.best_estimator_
-                best_params = grid_search.best_params_
-                cv_score = grid_search.best_score_
+                search.fit(X_train, y_train)
+                best_model = search.best_estimator_
+                best_params = search.best_params_
+                cv_score = search.best_score_
             else:
                 best_model = model
                 best_model.fit(X_train, y_train)

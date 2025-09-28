@@ -1,0 +1,23 @@
+MODEL INFORMATION: svr_linear
+==================================================
+
+Description: Support Vector Regression with linear kernel
+Status: ✅ GOOD
+
+PERFORMANCE METRICS:
+------------------------------
+Test R²: 0.9994
+Test RMSE: 0.0680
+Test MAE: 0.0439
+Train R²: 0.9997
+CV R² Mean: 0.9996
+CV R² Std: 0.0001
+Overfitting Gap: 0.0003
+
+CONFIGURATION:
+------------------------------
+Features Used: 46
+Feature Selection: None
+Best Parameters: {'model__C': 1, 'model__epsilon': 0.1}
+
+Training Date: 2025-09-29T00:25:47.238843
