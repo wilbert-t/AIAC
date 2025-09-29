@@ -190,53 +190,35 @@ class DistributedGraphNeuralNetworkAnalyzer:
         # Adjust parameters based on available resources
         if self.use_distributed and self.world_size > 1:
             # Distributed training - can use larger batch sizes and more epochs
-            schnet_epochs, schnet_batch = 80, 64 * self.world_size  # Scale batch size
-            cgcnn_epochs, cgcnn_batch = 150, 32 * self.world_size
-            megnet_epochs, megnet_batch = 180, 32 * self.world_size
-            learning_rate = 0.001 * np.sqrt(self.world_size)  # Scale learning rate
-            weight_decay = 1e-5
+            # Start with smaller epochs for testing, can be increased later
+            schnet_epochs, schnet_batch = 40, 32 * self.world_size  # Reduced epochs for stability
+            cgcnn_epochs, cgcnn_batch = 60, 16 * self.world_size    # Reduced for stability
+            megnet_epochs, megnet_batch = 80, 16 * self.world_size  # Reduced for stability
+            learning_rate = 0.0005 * np.sqrt(self.world_size)       # Lower learning rate
+            weight_decay = 1e-4
         elif torch.cuda.is_available() and torch.cuda.device_count() > 1:
-            # Multi-GPU DataParallel
-            schnet_epochs, schnet_batch = 70, 128
-            cgcnn_epochs, cgcnn_batch = 130, 64
-            megnet_epochs, megnet_batch = 160, 64
-            learning_rate = 0.001
-            weight_decay = 1e-5
+            # Multi-GPU DataParallel - conservative parameters
+            schnet_epochs, schnet_batch = 30, 32   # Reduced epochs and batch size
+            cgcnn_epochs, cgcnn_batch = 50, 16     # More conservative
+            megnet_epochs, megnet_batch = 60, 16   # More conservative
+            learning_rate = 0.0005                 # Lower learning rate for stability
+            weight_decay = 1e-4
         elif torch.cuda.is_available():
-            # Single GPU
-            schnet_epochs, schnet_batch = 60, 64
-            cgcnn_epochs, cgcnn_batch = 120, 32
-            megnet_epochs, megnet_batch = 150, 32
-            learning_rate = 0.001
+            # Single GPU - moderate parameters
+            schnet_epochs, schnet_batch = 25, 16   # Even more conservative
+            cgcnn_epochs, cgcnn_batch = 40, 8      # Smaller batches
+            megnet_epochs, megnet_batch = 50, 8    # Smaller batches
+            learning_rate = 0.0005
             weight_decay = 1e-4
         else:
-            # CPU training
-            schnet_epochs, schnet_batch = 40, 16
-            cgcnn_epochs, cgcnn_batch = 80, 16
-            megnet_epochs, megnet_batch = 100, 16
-            learning_rate = 0.0005
+            # CPU training - very conservative
+            schnet_epochs, schnet_batch = 20, 4    # Very small for CPU
+            cgcnn_epochs, cgcnn_batch = 30, 4      # Very small for CPU
+            megnet_epochs, megnet_batch = 40, 4    # Very small for CPU
+            learning_rate = 0.0001
             weight_decay = 1e-4
         
         configs = {
-            'schnet_custom': {
-                'architecture': 'schnet_custom',
-                'model_params': {
-                    'hidden_channels': 128,
-                    'num_filters': 128,
-                    'num_interactions': 6,
-                    'num_gaussians': 50,
-                    'cutoff': 6.0,
-                    'max_num_neighbors': 32
-                },
-                'training_params': {
-                    'learning_rate': learning_rate,
-                    'batch_size': schnet_batch,
-                    'epochs': schnet_epochs,
-                    'weight_decay': weight_decay,
-                    'optimizer': 'adamw',
-                    'scheduler': 'cosine'
-                }
-            },
             'cgcnn': {
                 'architecture': 'cgcnn',
                 'model_params': {
@@ -269,6 +251,25 @@ class DistributedGraphNeuralNetworkAnalyzer:
                     'epochs': megnet_epochs,
                     'weight_decay': weight_decay,
                     'optimizer': 'adam',
+                    'scheduler': 'cosine'
+                }
+            },
+            'schnet_custom': {
+                'architecture': 'schnet_custom',
+                'model_params': {
+                    'hidden_channels': 128,
+                    'num_filters': 128,
+                    'num_interactions': 6,
+                    'num_gaussians': 50,
+                    'cutoff': 6.0,
+                    'max_num_neighbors': 32
+                },
+                'training_params': {
+                    'learning_rate': learning_rate,
+                    'batch_size': schnet_batch,
+                    'epochs': schnet_epochs,
+                    'weight_decay': weight_decay,
+                    'optimizer': 'adamw',
                     'scheduler': 'cosine'
                 }
             }
@@ -635,6 +636,19 @@ class DistributedGraphNeuralNetworkAnalyzer:
                 )
                 
                 self._input_adjusted = False
+                
+                # Initialize weights properly to prevent NaN
+                self._init_weights()
+            
+            def _init_weights(self):
+                """Initialize model weights to prevent NaN issues"""
+                for module in self.modules():
+                    if isinstance(module, nn.Linear):
+                        nn.init.xavier_uniform_(module.weight, gain=0.1)  # Smaller gain for stability
+                        if module.bias is not None:
+                            nn.init.constant_(module.bias, 0)
+                    elif isinstance(module, nn.Embedding):
+                        nn.init.normal_(module.weight, 0, 0.1)
             
             def _build_edges_simple(self, pos, batch):
                 """Simple edge construction"""
@@ -676,15 +690,20 @@ class DistributedGraphNeuralNetworkAnalyzer:
                     pos: Node positions (batch_size, 3)
                     batch: Batch indices
                 """
-                # FIXED: Use node features directly instead of atomic numbers
+                # Check for NaN inputs
+                if torch.isnan(x).any() or torch.isinf(x).any():
+                    print("Warning: NaN/Inf in input features")
+                    return torch.zeros(batch.max().item() + 1, 1, device=x.device)
+                
                 # Handle dynamic input size for node features
                 if self.node_embedding is None or not self._input_adjusted:
                     input_dim = x.size(1)
                     self.node_embedding = nn.Linear(input_dim, self.hidden_channels).to(x.device)
                     self._input_adjusted = True
                 
-                # Embed node features to hidden dimensions
+                # Embed node features to hidden dimensions with stability
                 h = self.node_embedding(x.float())
+                h = torch.clamp(h, min=-10, max=10)  # Prevent explosion
                 
                 edge_index, edge_distances = self._build_edges_simple(pos, batch)
                 
@@ -692,7 +711,9 @@ class DistributedGraphNeuralNetworkAnalyzer:
                     return global_mean_pool(h, batch)
                 
                 edge_distances = edge_distances.unsqueeze(-1)
+                edge_distances = torch.clamp(edge_distances, min=1e-6, max=20)  # Prevent division by zero
                 edge_features = self.distance_expansion(edge_distances)
+                edge_features = torch.clamp(edge_features, min=-10, max=10)
                 
                 h = h.float()
                 edge_features = edge_features.float()
@@ -706,14 +727,23 @@ class DistributedGraphNeuralNetworkAnalyzer:
                     
                     edge_input = torch.cat([node_features, edge_features], dim=-1)
                     edge_update = interaction(edge_input)
+                    edge_update = torch.clamp(edge_update, min=-10, max=10)  # Prevent explosion
+                    
+                    # Check for NaN after interaction
+                    if torch.isnan(edge_update).any():
+                        print("Warning: NaN in edge update")
+                        continue
                     
                     edge_update = edge_update.float()
                     h_new = h.clone().float()
                     h_new.index_add_(0, col, edge_update)
-                    h = h_new
+                    h = torch.clamp(h_new, min=-10, max=10)  # Prevent explosion
                 
                 graph_features = global_mean_pool(h, batch)
-                return self.output_layers(graph_features)
+                output = self.output_layers(graph_features)
+                output = torch.clamp(output, min=-50, max=50)  # Final output clamping
+                
+                return output
         
         return CustomSchNet(**model_params)
     
@@ -1004,46 +1034,83 @@ class DistributedGraphNeuralNetworkAnalyzer:
                         batch = batch.to(self.device)
                         optimizer.zero_grad()
                         
+                        # Check for NaN in input data
+                        if torch.isnan(batch.x).any() or torch.isnan(batch.y).any():
+                            print("  Skipping batch with NaN input data")
+                            continue
+                        
                         if use_amp:
                             with torch.cuda.amp.autocast():
                                 if config['architecture'] == 'schnet_custom':
-                                    # FIXED: Pass node features directly
                                     out = model(batch.x, batch.pos, batch.batch).view(-1)
                                 else:
                                     out = model(batch).view(-1)
                                 
                                 loss = F.mse_loss(out, batch.y)
                             
-                            if not (torch.isnan(loss) or torch.isinf(loss)):
-                                scaler.scale(loss).backward()
-                                scaler.unscale_(optimizer)
-                                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                                scaler.step(optimizer)
+                            # Check for NaN/Inf in loss and outputs
+                            if torch.isnan(loss) or torch.isinf(loss) or torch.isnan(out).any() or torch.isinf(out).any():
+                                print(f"  Skipping batch: NaN/Inf in loss or outputs (loss={loss.item():.4f})")
+                                continue
+                            
+                            # FIXED: Proper scaler handling
+                            scaler.scale(loss).backward()
+                            scaler.unscale_(optimizer)
+                            
+                            # Check gradients for NaN/Inf
+                            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                            if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                                print(f"  Skipping step: NaN/Inf gradients (norm={grad_norm:.4f})")
+                                # FIXED: Reset scaler state when skipping
                                 scaler.update()
+                                continue
+                                
+                            scaler.step(optimizer)
+                            scaler.update()
                         else:
                             if config['architecture'] == 'schnet_custom':
-                                # FIXED: Pass node features directly  
                                 out = model(batch.x, batch.pos, batch.batch).view(-1)
                             else:
                                 out = model(batch).view(-1)
                             
                             loss = F.mse_loss(out, batch.y)
                             
-                            if not (torch.isnan(loss) or torch.isinf(loss)):
-                                loss.backward()
-                                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                                optimizer.step()
+                            # Check for NaN/Inf in loss and outputs
+                            if torch.isnan(loss) or torch.isinf(loss) or torch.isnan(out).any() or torch.isinf(out).any():
+                                print(f"  Skipping batch: NaN/Inf in loss or outputs (loss={loss.item():.4f})")
+                                continue
+                            
+                            loss.backward()
+                            
+                            # Check gradients for NaN/Inf
+                            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                            if torch.isnan(grad_norm) or torch.isinf(grad_norm):
+                                print(f"  Skipping step: NaN/Inf gradients (norm={grad_norm:.4f})")
+                                continue
+                                
+                            optimizer.step()
                         
-                        if not (torch.isnan(loss) or torch.isinf(loss)):
-                            total_train_loss += loss.item()
+                        total_train_loss += loss.item()
                         
                     except RuntimeError as e:
                         if "out of memory" in str(e):
                             print(f"  CUDA OOM, clearing cache...")
                             self._clear_cuda_cache()
+                            # FIXED: Reset scaler state after OOM
+                            if use_amp:
+                                scaler.update()
+                            continue
+                        elif "unscale_() has already been called" in str(e):
+                            print("  Scaler state error, resetting...")
+                            # FIXED: Reset scaler and skip this batch
+                            if use_amp:
+                                scaler.update()
                             continue
                         else:
                             print(f"  Training error: {e}")
+                            # FIXED: Reset scaler state on other errors
+                            if use_amp:
+                                scaler.update()
                             continue
                 
                 # Validation
@@ -1091,7 +1158,7 @@ class DistributedGraphNeuralNetworkAnalyzer:
                 else:
                     patience_counter += 1
                 
-                if patience_counter >= 25:
+                if patience_counter >= 25:  # edit this for longer run 
                     if TQDM_AVAILABLE and (not self.is_distributed or self.rank == 0):
                         if hasattr(epoch_pbar, 'set_postfix'):
                             epoch_pbar.set_postfix({
@@ -1171,7 +1238,7 @@ class DistributedGraphNeuralNetworkAnalyzer:
         return results
     
     def _evaluate_model(self, model, data_loader, architecture):
-        """Evaluate model on data loader"""
+        """Evaluate model on data loader with NaN handling"""
         model.eval()
         all_predictions = []
         all_targets = []
@@ -1182,10 +1249,14 @@ class DistributedGraphNeuralNetworkAnalyzer:
                     batch = batch.to(self.device)
                     
                     if architecture == 'schnet_custom':
-                        # FIXED: Pass node features directly
                         out = model(batch.x, batch.pos, batch.batch).view(-1)
                     else:
                         out = model(batch).view(-1)
+                    
+                    # Check for NaN/Inf in outputs
+                    if torch.isnan(out).any() or torch.isinf(out).any():
+                        print(f"  Warning: NaN/Inf detected in {architecture} predictions, skipping batch")
+                        continue
                     
                     all_predictions.extend(out.cpu().numpy())
                     all_targets.extend(batch.y.cpu().numpy())
@@ -1195,21 +1266,60 @@ class DistributedGraphNeuralNetworkAnalyzer:
                         self._clear_cuda_cache()
                         continue
                     else:
+                        print(f"  Warning: Error in evaluation batch: {e}")
                         continue
+        
+        if len(all_predictions) == 0 or len(all_targets) == 0:
+            print(f"  Warning: No valid predictions for {architecture}")
+            return {
+                'r2': 0.0,
+                'rmse': float('inf'),
+                'mae': float('inf'),
+                'predictions': np.array([]),
+                'targets': np.array([])
+            }
         
         predictions = np.array(all_predictions)
         targets = np.array(all_targets)
+        
+        # Check for NaN in final arrays
+        if np.isnan(predictions).any() or np.isnan(targets).any():
+            print(f"  Warning: NaN values found in final predictions/targets for {architecture}")
+            # Remove NaN entries
+            valid_mask = ~(np.isnan(predictions) | np.isnan(targets))
+            predictions = predictions[valid_mask]
+            targets = targets[valid_mask]
+            
+            if len(predictions) == 0:
+                return {
+                    'r2': 0.0,
+                    'rmse': float('inf'),
+                    'mae': float('inf'),
+                    'predictions': np.array([]),
+                    'targets': np.array([])
+                }
         
         # Denormalize predictions and targets if normalization was applied
         if hasattr(self, 'energy_mean') and hasattr(self, 'energy_std'):
             predictions = predictions * self.energy_std + self.energy_mean
             targets = targets * self.energy_std + self.energy_mean
         
-        if len(predictions) > 0 and len(targets) > 0:
-            r2 = r2_score(targets, predictions)
-            rmse = np.sqrt(mean_squared_error(targets, predictions))
-            mae = mean_absolute_error(targets, predictions)
-        else:
+        # Calculate metrics with additional safety checks
+        try:
+            if len(predictions) > 1 and len(targets) > 1:
+                # Check for constant predictions (which would cause r2_score issues)
+                if np.std(predictions) < 1e-10:
+                    print(f"  Warning: Constant predictions detected for {architecture}")
+                    r2 = 0.0
+                else:
+                    r2 = r2_score(targets, predictions)
+                    
+                rmse = np.sqrt(mean_squared_error(targets, predictions))
+                mae = mean_absolute_error(targets, predictions)
+            else:
+                r2 = rmse = mae = 0.0
+        except Exception as e:
+            print(f"  Warning: Error calculating metrics for {architecture}: {e}")
             r2 = rmse = mae = 0.0
         
         return {
