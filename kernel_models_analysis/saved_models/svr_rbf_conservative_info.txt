@@ -1,0 +1,23 @@
+MODEL INFORMATION: svr_rbf_conservative
+==================================================
+
+Description: Support Vector Regression with RBF kernel
+Status: ✅ GOOD
+
+PERFORMANCE METRICS:
+------------------------------
+Test R²: 0.8899
+Test RMSE: 0.9506
+Test MAE: 0.6259
+Train R²: 0.9736
+CV R² Mean: 0.7888
+CV R² Std: 0.0490
+Overfitting Gap: 0.0837
+
+CONFIGURATION:
+------------------------------
+Features Used: 25
+Feature Selection: 25
+Best Parameters: {'model__C': 100, 'model__epsilon': 0.1, 'model__gamma': 0.01}
+
+Training Date: 2025-09-30T02:32:27.784937

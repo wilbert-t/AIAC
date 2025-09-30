@@ -1,0 +1,21 @@
+ANALYSIS METADATA
+==================================================
+
+Analysis Timestamp: 2025-09-30T02:32:27.784937
+Random State: 42
+Data Source: ./au_cluster_analysis_results/descriptors.csv
+
+DATA STATISTICS:
+------------------------------
+Samples: 999
+Features: 45
+Target Mean: -1551.250
+Target Std: 2.875
+Target Range: [-1557.209, -1530.908]
+Feature/Sample Ratio: 0.045
+
+FEATURES USED:
+------------------------------
+Total Features: 45
+Feature Names: mean_bond_length, std_bond_length, min_bond_length, max_bond_length, n_bonds, bond_variance, mean_coordination, std_coordination, max_coordination, min_coordination...
+Removed Features: 23 constant/zero-variance features

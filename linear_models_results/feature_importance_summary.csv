@@ -1,0 +1,16 @@
+feature,abs_coefficient_mean,abs_coefficient_std,abs_coefficient_count,coefficient_mean
+mean_bond_length,3.7983,0.0858,4,3.7983
+n_bonds,1.8149,0.0309,4,-1.8149
+bond_variance,1.5069,0.0987,4,-1.5069
+radius_of_gyration,1.3217,0.0101,4,1.3217
+std_coordination,0.6274,0.006,4,0.6274
+mean_coordination,0.601,0.0156,4,-0.601
+compactness,0.5214,0.0041,4,-0.5214
+asphericity,0.5205,0.0043,4,-0.5205
+std_bond_length,0.4808,0.0344,4,-0.4808
+surface_fraction,0.3423,0.0054,4,-0.3423
+max_coordination,0.2966,0.0146,4,-0.2966
+y_range,0.1327,0.0032,4,0.1327
+z_range,0.0298,0.0013,4,0.0298
+x_range,0.0093,0.0031,2,-0.0093
+anisotropy,0.0037,0.0004,2,0.0037

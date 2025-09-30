@@ -1,0 +1,37 @@
+{
+  "model_name": "elastic_net",
+  "model_type": "ElasticNetCV",
+  "performance": {
+    "test_r2": 0.7929927209358624,
+    "test_rmse": 1.287485730942675,
+    "test_mae": 0.9475189380284632,
+    "cv_r2_mean": 0.7977937748019375,
+    "cv_r2_std": 0.023426213406334558
+  },
+  "training_info": {
+    "train_samples": 799,
+    "test_samples": 200,
+    "features": 15,
+    "feature_names": [
+      "mean_bond_length",
+      "std_bond_length",
+      "n_bonds",
+      "mean_coordination",
+      "std_coordination",
+      "max_coordination",
+      "radius_of_gyration",
+      "asphericity",
+      "surface_fraction",
+      "x_range",
+      "y_range",
+      "z_range",
+      "anisotropy",
+      "compactness",
+      "bond_variance"
+    ]
+  },
+  "hyperparameters": {
+    "alpha": 0.004281332398719396,
+    "l1_ratio": 0.9
+  }
+}

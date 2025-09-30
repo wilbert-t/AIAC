@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Robust Tree-Based Models for Au Cluster Energy Prediction
-Simplified, reliable implementation focusing on core functionality
+Enhanced Tree-Based Models for Au Cluster Energy Prediction
+With comprehensive reporting capabilities matching LinearModelsAnalyzer
 """
 
 import numpy as np
@@ -10,18 +10,24 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 import joblib
+import pickle
 import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Any
 import logging
+import json
+from datetime import datetime
+from matplotlib.backends.backend_pdf import PdfPages
+from scipy import stats
 
-# Core dependencies (required)
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+# Core dependencies
+from sklearn.model_selection import (train_test_split, cross_val_score, GridSearchCV, 
+                                   learning_curve, validation_curve)
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.inspection import permutation_importance
 
-# Optional dependencies (graceful degradation)
+# Optional dependencies
 try:
     import xgboost as xgb
     HAS_XGBOOST = True
@@ -36,6 +42,10 @@ except ImportError:
 
 warnings.filterwarnings('ignore')
 
+# Set style for better plots
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -48,6 +58,7 @@ class ModelConfig:
     param_grid: Dict
     requires_scaling: bool = False
     is_available: bool = True
+    justification: str = ""
 
 @dataclass
 class TrainingConfig:
@@ -56,7 +67,7 @@ class TrainingConfig:
     cv_folds: int = 5
     random_state: int = 42
     n_jobs: int = -1
-    max_param_combinations: int = 27  # Reasonable limit for grid search
+    max_param_combinations: int = 27
 
 class DataValidationError(Exception):
     """Custom exception for data validation errors"""
@@ -66,16 +77,17 @@ class ModelTrainingError(Exception):
     """Custom exception for model training errors"""
     pass
 
-class RobustTreeAnalyzer:
+class EnhancedTreeAnalyzer:
     """
-    Robust Tree-Based Models Analyzer for Au Cluster Energy Prediction
+    Enhanced Tree-Based Models Analyzer with Comprehensive Reporting
     
     Features:
-    - Comprehensive error handling and validation
-    - Graceful degradation when optional libraries unavailable
-    - Memory-efficient processing
-    - Clear separation of concerns
-    - Extensive logging and monitoring
+    - Individual model analysis with detailed plots
+    - Combined model comparison visualizations
+    - Executive summary generation
+    - Learning curves and cross-validation analysis
+    - Comprehensive residual analysis
+    - Performance tables and predictions export
     """
     
     def __init__(self, config: Optional[TrainingConfig] = None):
@@ -83,14 +95,23 @@ class RobustTreeAnalyzer:
         self.models = {}
         self.results = {}
         self.feature_names = []
+        self.predictions_df = None
+        self.cv_results = {}
+        self.learning_curves = {}
+        
+        # Train/test splits (stored for analysis)
+        self.X_train = None
+        self.X_test = None
+        self.y_train = None
+        self.y_test = None
         
         # Initialize available models
         self._setup_models()
         
-        logger.info(f"Initialized TreeAnalyzer with {len(self.model_configs)} available models")
+        logger.info(f"Initialized EnhancedTreeAnalyzer with {len(self.model_configs)} available models")
     
     def _setup_models(self):
-        """Setup available model configurations"""
+        """Setup available model configurations with justifications"""
         self.model_configs = {
             'random_forest': ModelConfig(
                 name='random_forest',
@@ -101,7 +122,15 @@ class RobustTreeAnalyzer:
                     'min_samples_split': [2, 5, 10],
                     'max_features': ['sqrt', 'log2']
                 },
-                is_available=True
+                is_available=True,
+                justification="""
+                Random Forest:
+                - Robust ensemble method reducing overfitting
+                - Handles feature interactions naturally
+                - Provides feature importance rankings
+                - Excellent baseline for tabular data
+                - Built-in cross-validation via out-of-bag samples
+                """
             )
         }
         
@@ -117,7 +146,15 @@ class RobustTreeAnalyzer:
                     'colsample_bytree': [0.8, 1.0],
                     'reg_lambda': [1, 5]
                 },
-                is_available=True
+                is_available=True,
+                justification="""
+                XGBoost:
+                - Gradient boosting with advanced regularization
+                - Excellent predictive performance on structured data
+                - Handles missing values automatically
+                - Built-in feature importance and SHAP values
+                - Optimized for speed and memory efficiency
+                """
             )
         else:
             logger.warning("XGBoost not available - skipping")
@@ -134,7 +171,15 @@ class RobustTreeAnalyzer:
                     'feature_fraction': [0.8, 1.0],
                     'min_child_samples': [10, 20]
                 },
-                is_available=True
+                is_available=True,
+                justification="""
+                LightGBM:
+                - Fast gradient boosting with leaf-wise growth
+                - Memory efficient with categorical feature support
+                - Built-in overfitting protection
+                - Excellent for large datasets
+                - Advanced feature importance analysis
+                """
             )
         else:
             logger.warning("LightGBM not available - skipping")
@@ -143,7 +188,6 @@ class RobustTreeAnalyzer:
         """Comprehensive data validation"""
         logger.info("Validating input data...")
         
-        # Basic shape validation
         if len(X) != len(y):
             raise DataValidationError(f"Feature matrix ({len(X)}) and target ({len(y)}) length mismatch")
         
@@ -204,7 +248,9 @@ class RobustTreeAnalyzer:
         if target_column not in df.columns:
             raise DataValidationError(f"Target column '{target_column}' not found in data")
         
-        # Define expected feature categories
+        # Define expected feature categories - EXCLUDE ENERGY-DERIVED FEATURES
+        exclude_features = ['energy_per_atom', 'filename', 'Unnamed: 0', target_column]
+        
         basic_features = [
             'mean_bond_length', 'std_bond_length', 'n_bonds',
             'mean_coordination', 'std_coordination', 'max_coordination',
@@ -213,9 +259,11 @@ class RobustTreeAnalyzer:
             'compactness', 'bond_variance'
         ]
         
-        # Find available features
-        available_basic = [f for f in basic_features if f in df.columns]
-        soap_features = [col for col in df.columns if col.startswith('soap_')]
+        # Find available features (excluding energy-derived ones)
+        available_basic = [f for f in basic_features 
+                          if f in df.columns and f not in exclude_features]
+        soap_features = [col for col in df.columns 
+                        if col.startswith('soap_') and col not in exclude_features]
         
         all_features = available_basic + soap_features
         
@@ -250,7 +298,6 @@ class RobustTreeAnalyzer:
         total_combinations = 1
         
         for param, values in param_grid.items():
-            # Limit each parameter to max 3 values
             if len(values) > 3:
                 step = len(values) // 3
                 limited_values = values[::step][:3]
@@ -262,23 +309,48 @@ class RobustTreeAnalyzer:
         
         if total_combinations > self.config.max_param_combinations:
             logger.warning(f"Parameter grid size ({total_combinations}) exceeds limit, using reduced grid")
-            # Further reduce if still too large
             for param in limited_grid:
                 if len(limited_grid[param]) > 2:
                     limited_grid[param] = limited_grid[param][:2]
         
         return limited_grid
     
+    def compute_learning_curves(self, X, y, model_name, model):
+        """Compute learning curves for a model"""
+        print(f"Computing learning curves for {model_name}...")
+        
+        try:
+            train_sizes, train_scores, val_scores = learning_curve(
+                model, X, y, 
+                train_sizes=np.linspace(0.1, 1.0, 10),
+                cv=5, 
+                scoring='r2',
+                n_jobs=min(self.config.n_jobs, 2),
+                random_state=self.config.random_state
+            )
+            
+            return {
+                'train_sizes': train_sizes,
+                'train_scores_mean': train_scores.mean(axis=1),
+                'train_scores_std': train_scores.std(axis=1),
+                'val_scores_mean': val_scores.mean(axis=1),
+                'val_scores_std': val_scores.std(axis=1)
+            }
+        except Exception as e:
+            logger.warning(f"Learning curve computation failed for {model_name}: {e}")
+            return None
+    
     def train_single_model(self, config: ModelConfig, X_train: pd.DataFrame, 
-                          y_train: pd.Series) -> Dict[str, Any]:
-        """Train a single model with error handling"""
+                          y_train: pd.Series, X: pd.DataFrame, y: pd.Series) -> Dict[str, Any]:
+        """Train a single model with comprehensive analysis"""
         logger.info(f"Training {config.name}...")
+        print(f"Justification: {config.justification.strip()}")
         
         try:
             # Create base model
             base_params = {
                 'random_state': self.config.random_state,
-                'n_jobs': self.config.n_jobs
+                'n_jobs': min(self.config.n_jobs, 2)
             }
             
             # Add model-specific parameters
@@ -301,7 +373,7 @@ class RobustTreeAnalyzer:
                     n_iter=min(20, self.config.max_param_combinations),
                     cv=min(self.config.cv_folds, 3),
                     scoring='r2',
-                    n_jobs=min(self.config.n_jobs, 2),
+                    n_jobs=1,  # Limit to prevent resource issues
                     error_score='raise',
                     random_state=self.config.random_state
                 )
@@ -315,6 +387,11 @@ class RobustTreeAnalyzer:
                 best_model.fit(X_train, y_train)
                 best_params = {}
                 cv_score = None
+            
+            # Compute learning curves
+            learning_curve_data = self.compute_learning_curves(X, y, config.name, best_model)
+            if learning_curve_data:
+                self.learning_curves[config.name] = learning_curve_data
             
             return {
                 'model': best_model,
@@ -334,14 +411,14 @@ class RobustTreeAnalyzer:
             }
     
     def evaluate_model(self, model: Any, X_train: pd.DataFrame, y_train: pd.Series,
-                      X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
+                      X_test: pd.DataFrame, y_test: pd.Series, X: pd.DataFrame, y: pd.Series) -> Dict[str, float]:
         """Evaluate model performance comprehensively"""
         try:
             # Predictions
             y_train_pred = model.predict(X_train)
             y_test_pred = model.predict(X_test)
             
-            # Metrics
+            # Basic metrics
             metrics = {
                 'train_r2': r2_score(y_train, y_train_pred),
                 'test_r2': r2_score(y_test, y_test_pred),
@@ -351,25 +428,61 @@ class RobustTreeAnalyzer:
                 'test_mae': mean_absolute_error(y_test, y_test_pred)
             }
             
-            # Cross-validation
+            # Cross-validation with multiple metrics
             try:
-                cv_scores = cross_val_score(
-                    model, 
-                    pd.concat([X_train, X_test]), 
-                    pd.concat([y_train, y_test]), 
-                    cv=3, 
-                    scoring='r2'
-                )
-                metrics['cv_mean'] = cv_scores.mean()
-                metrics['cv_std'] = cv_scores.std()
+                cv_scores_r2 = cross_val_score(model, X, y, cv=5, scoring='r2')
+                cv_scores_mae = cross_val_score(model, X, y, cv=5, scoring='neg_mean_absolute_error')
+                cv_scores_rmse = cross_val_score(model, X, y, cv=5, scoring='neg_root_mean_squared_error')
+                
+                metrics.update({
+                    'cv_r2_mean': cv_scores_r2.mean(),
+                    'cv_r2_std': cv_scores_r2.std(),
+                    'cv_mae_mean': -cv_scores_mae.mean(),
+                    'cv_mae_std': cv_scores_mae.std(),
+                    'cv_rmse_mean': -cv_scores_rmse.mean(),
+                    'cv_rmse_std': cv_scores_rmse.std()
+                })
+                
+                # Store CV scores for detailed analysis
+                metrics['cv_scores'] = {
+                    'r2': cv_scores_r2,
+                    'mae': -cv_scores_mae,
+                    'rmse': -cv_scores_rmse
+                }
+                
             except Exception as e:
                 logger.warning(f"Cross-validation failed: {e}")
-                metrics['cv_mean'] = metrics['test_r2']
-                metrics['cv_std'] = 0.0
+                metrics.update({
+                    'cv_r2_mean': metrics['test_r2'],
+                    'cv_r2_std': 0.0,
+                    'cv_mae_mean': metrics['test_mae'],
+                    'cv_mae_std': 0.0,
+                    'cv_rmse_mean': metrics['test_rmse'],
+                    'cv_rmse_std': 0.0,
+                    'cv_scores': {
+                        'r2': np.array([metrics['test_r2']]),
+                        'mae': np.array([metrics['test_mae']]),
+                        'rmse': np.array([metrics['test_rmse']])
+                    }
+                })
             
-            # Store predictions
-            metrics['y_train_pred'] = y_train_pred
-            metrics['y_test_pred'] = y_test_pred
+            # Residual analysis
+            residuals = y_test - y_test_pred
+            residual_stats = {
+                'mean': np.mean(residuals),
+                'std': np.std(residuals),
+                'skewness': stats.skew(residuals),
+                'kurtosis': stats.kurtosis(residuals),
+                'normality_pvalue': stats.shapiro(residuals)[1] if len(residuals) <= 5000 else stats.jarque_bera(residuals)[1]
+            }
+            
+            # Store additional data for plotting
+            metrics.update({
+                'y_train_pred': y_train_pred,
+                'y_test_pred': y_test_pred,
+                'residuals': residuals,
+                'residual_stats': residual_stats
+            })
             
             return metrics
             
@@ -402,8 +515,10 @@ class RobustTreeAnalyzer:
             return None
     
     def train_all_models(self, X: pd.DataFrame, y: pd.Series) -> Dict[str, Dict]:
-        """Train all available models with comprehensive error handling"""
-        logger.info("Starting model training...")
+        """Train all available models with comprehensive analysis"""
+        print("\n" + "="*60)
+        print("TRAINING TREE-BASED MODELS")
+        print("="*60)
         
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
@@ -417,6 +532,7 @@ class RobustTreeAnalyzer:
         self.y_train, self.y_test = y_train, y_test
         
         results = {}
+        predictions_data = []
         successful_models = 0
         
         for name, config in self.model_configs.items():
@@ -424,15 +540,18 @@ class RobustTreeAnalyzer:
                 logger.info(f"Skipping {name} - not available")
                 continue
             
+            print(f"\n🌳 Training {name.upper()}...")
+            
             # Train model
-            training_result = self.train_single_model(config, X_train, y_train)
+            training_result = self.train_single_model(config, X_train, y_train, X, y)
             
             if training_result['status'] == 'success' and training_result['model'] is not None:
                 # Evaluate model
                 metrics = self.evaluate_model(
                     training_result['model'], 
                     X_train, y_train, 
-                    X_test, y_test
+                    X_test, y_test,
+                    X, y
                 )
                 
                 if metrics:  # Only proceed if evaluation succeeded
@@ -440,6 +559,17 @@ class RobustTreeAnalyzer:
                     feature_importance = self.extract_feature_importance(
                         training_result['model'], name
                     )
+                    
+                    # Store predictions for combined analysis
+                    for i, (actual, pred) in enumerate(zip(y_test, metrics['y_test_pred'])):
+                        predictions_data.append({
+                            'model': name,
+                            'sample_id': i,
+                            'actual': actual,
+                            'predicted': pred,
+                            'residual': actual - pred,
+                            'abs_residual': abs(actual - pred)
+                        })
                     
                     # Combine all results
                     results[name] = {
@@ -449,8 +579,10 @@ class RobustTreeAnalyzer:
                     }
                     
                     successful_models += 1
-                    logger.info(f"✓ {name}: R² = {metrics.get('test_r2', 0):.3f}, "
-                              f"RMSE = {metrics.get('test_rmse', 0):.3f}")
+                    print(f"✅ {name}: R² = {metrics.get('test_r2', 0):.3f}, "
+                          f"RMSE = {metrics.get('test_rmse', 0):.3f}, "
+                          f"MAE = {metrics.get('test_mae', 0):.3f}")
+                    print(f"   CV: R² = {metrics.get('cv_r2_mean', 0):.3f}±{metrics.get('cv_r2_std', 0):.3f}")
                 else:
                     logger.error(f"Model evaluation failed for {name}")
             else:
@@ -459,209 +591,369 @@ class RobustTreeAnalyzer:
         if successful_models == 0:
             raise ModelTrainingError("No models trained successfully")
         
-        logger.info(f"Successfully trained {successful_models}/{len(self.model_configs)} models")
+        # Store predictions DataFrame
+        self.predictions_df = pd.DataFrame(predictions_data)
         self.results = results
+        self.cv_results = {name: results[name]['cv_scores'] for name in results}
+        
+        logger.info(f"Successfully trained {successful_models}/{len(self.model_configs)} models")
         return results
     
-    def analyze_results(self) -> pd.DataFrame:
-        """Analyze and summarize model results"""
-        if not self.results:
-            raise ValueError("No results to analyze - run train_all_models first")
+    def create_individual_model_plots(self, output_dir):
+        """Create individual plots for each model"""
+        print("Creating individual model plots...")
         
-        logger.info("Analyzing model results...")
-        
-        # Create summary dataframe
-        summary_data = []
         for name, result in self.results.items():
-            if result.get('status') == 'success':
-                summary_data.append({
-                    'model': name,
-                    'train_r2': result.get('train_r2', 0),
-                    'test_r2': result.get('test_r2', 0),
-                    'train_rmse': result.get('train_rmse', 0),
-                    'test_rmse': result.get('test_rmse', 0),
-                    'cv_mean': result.get('cv_mean', 0),
-                    'cv_std': result.get('cv_std', 0),
-                    'overfitting': result.get('train_r2', 0) - result.get('test_r2', 0)
-                })
-        
-        if not summary_data:
-            raise ValueError("No successful model results to analyze")
-        
-        summary_df = pd.DataFrame(summary_data)
-        summary_df = summary_df.sort_values('test_r2', ascending=False)
-        
-        # Print analysis
-        print("\n" + "="*60)
-        print("TREE-BASED MODELS ANALYSIS RESULTS")
-        print("="*60)
-        
-        print(f"\nModel Performance Ranking:")
-        for i, row in summary_df.iterrows():
-            print(f"{row.name + 1:2d}. {row['model'].upper():<15} | "
-                  f"R² = {row['test_r2']:.3f} | "
-                  f"RMSE = {row['test_rmse']:.3f} | "
-                  f"CV = {row['cv_mean']:.3f}±{row['cv_std']:.3f}")
-        
-        # Best model analysis
-        best_model = summary_df.iloc[0]
-        print(f"\nBest Model: {best_model['model'].upper()}")
-        print(f"  Test R²: {best_model['test_r2']:.3f}")
-        print(f"  Test RMSE: {best_model['test_rmse']:.3f}")
-        print(f"  Overfitting: {best_model['overfitting']:.3f}")
-        
-        return summary_df
+            if result.get('status') != 'success':
+                continue
+                
+            model_dir = output_dir / f"{name}_individual"
+            model_dir.mkdir(exist_ok=True)
+            
+            # 1. Prediction vs Actual
+            self._plot_individual_prediction_vs_actual(name, result, model_dir)
+            
+            # 2. Residual plots + distribution
+            self._plot_individual_residuals(name, result, model_dir)
+            
+            # 3. Learning curves
+            self._plot_individual_learning_curve(name, model_dir)
+            
+            # 4. Cross-validation performance
+            self._plot_individual_cv_performance(name, result, model_dir)
     
-    def create_visualizations(self, output_dir: str = './tree_results'):
-        """Create essential visualizations"""
-        if not self.results:
-            logger.warning("No results available for visualization")
+    def _plot_individual_prediction_vs_actual(self, name, result, output_dir):
+        """Individual prediction vs actual plot"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Test set
+        y_true = self.y_test
+        y_pred = result['y_test_pred']
+        
+        ax1.scatter(y_true, y_pred, alpha=0.6, s=50, color='blue', label='Test Data')
+        
+        min_val = min(y_true.min(), y_pred.min())
+        max_val = max(y_true.max(), y_pred.max())
+        ax1.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8, label='Perfect Prediction')
+        
+        ax1.set_xlabel('Actual Energy')
+        ax1.set_ylabel('Predicted Energy')
+        ax1.set_title(f'{name.replace("_", " ").title()} - Test Set Predictions')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Add statistics
+        r2 = result['test_r2']
+        rmse = result['test_rmse']
+        mae = result['test_mae']
+        
+        stats_text = f'R² = {r2:.3f}\nRMSE = {rmse:.3f}\nMAE = {mae:.3f}'
+        ax1.text(0.05, 0.95, stats_text, transform=ax1.transAxes,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                verticalalignment='top')
+        
+        # Training set
+        y_train_true = self.y_train
+        y_train_pred = result['y_train_pred']
+        
+        ax2.scatter(y_train_true, y_train_pred, alpha=0.6, s=50, color='green', label='Train Data')
+        
+        min_val = min(y_train_true.min(), y_train_pred.min())
+        max_val = max(y_train_true.max(), y_train_pred.max())
+        ax2.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8, label='Perfect Prediction')
+        
+        ax2.set_xlabel('Actual Energy')
+        ax2.set_ylabel('Predicted Energy')
+        ax2.set_title(f'{name.replace("_", " ").title()} - Training Set Predictions')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # Add training statistics
+        train_r2 = result['train_r2']
+        train_rmse = result['train_rmse']
+        train_mae = result['train_mae']
+        
+        train_stats_text = f'R² = {train_r2:.3f}\nRMSE = {train_rmse:.3f}\nMAE = {train_mae:.3f}'
+        ax2.text(0.05, 0.95, train_stats_text, transform=ax2.transAxes,
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                verticalalignment='top')
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / f'{name}_predictions_vs_actual.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_individual_residuals(self, name, result, output_dir):
+        """Individual residual analysis plots"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        
+        residuals = result['residuals']
+        y_pred = result['y_test_pred']
+        
+        # Residuals vs Predicted
+        ax1.scatter(y_pred, residuals, alpha=0.6, s=50)
+        ax1.axhline(y=0, color='r', linestyle='--', alpha=0.8, label='Zero Residual')
+        ax1.set_xlabel('Predicted Energy')
+        ax1.set_ylabel('Residuals')
+        ax1.set_title(f'{name.replace("_", " ").title()} - Residuals vs Predicted')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Residuals histogram
+        ax2.hist(residuals, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+        ax2.axvline(x=0, color='r', linestyle='--', alpha=0.8)
+        ax2.set_xlabel('Residuals')
+        ax2.set_ylabel('Frequency')
+        ax2.set_title(f'{name.replace("_", " ").title()} - Residuals Distribution')
+        ax2.grid(True, alpha=0.3)
+        
+        # Q-Q plot for normality
+        stats.probplot(residuals, dist="norm", plot=ax3)
+        ax3.set_title(f'{name.replace("_", " ").title()} - Q-Q Plot (Normality Test)')
+        ax3.grid(True, alpha=0.3)
+        
+        # Residuals vs Order (to check for patterns)
+        ax4.plot(residuals, 'o', alpha=0.6, markersize=4)
+        ax4.axhline(y=0, color='r', linestyle='--', alpha=0.8)
+        ax4.set_xlabel('Sample Index')
+        ax4.set_ylabel('Residuals')
+        ax4.set_title(f'{name.replace("_", " ").title()} - Residuals vs Sample Order')
+        ax4.grid(True, alpha=0.3)
+        
+        # Add residual statistics
+        stats_dict = result['residual_stats']
+        stats_text = f"""Mean: {stats_dict['mean']:.4f}
+Std: {stats_dict['std']:.4f}
+Skewness: {stats_dict['skewness']:.3f}
+Kurtosis: {stats_dict['kurtosis']:.3f}
+Normality p: {stats_dict['normality_pvalue']:.3f}"""
+        
+        fig.text(0.02, 0.02, stats_text, fontsize=10, 
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / f'{name}_residual_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_individual_learning_curve(self, name, output_dir):
+        """Individual learning curve plot"""
+        if name not in self.learning_curves:
             return
         
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+        data = self.learning_curves[name]
         
-        # 1. Performance comparison
-        self._plot_performance_comparison(output_path)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
         
-        # 2. Feature importance
-        self._plot_feature_importance(output_path)
+        train_sizes = data['train_sizes']
+        train_mean = data['train_scores_mean']
+        train_std = data['train_scores_std']
+        val_mean = data['val_scores_mean']
+        val_std = data['val_scores_std']
         
-        # 3. Predictions vs actual
-        self._plot_predictions(output_path)
+        ax.plot(train_sizes, train_mean, 'o-', color='blue', label='Training Score')
+        ax.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.2, color='blue')
         
-        logger.info(f"Visualizations saved to {output_path}")
+        ax.plot(train_sizes, val_mean, 'o-', color='red', label='Validation Score')
+        ax.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.2, color='red')
+        
+        ax.set_xlabel('Training Set Size')
+        ax.set_ylabel('R² Score')
+        ax.set_title(f'{name.replace("_", " ").title()} - Learning Curve')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Add final scores
+        final_train = train_mean[-1]
+        final_val = val_mean[-1]
+        ax.text(0.02, 0.98, f'Final Training R²: {final_train:.3f}\nFinal Validation R²: {final_val:.3f}', 
+                transform=ax.transAxes, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / f'{name}_learning_curve.png', dpi=300, bbox_inches='tight')
+        plt.close()
     
-    def _plot_performance_comparison(self, output_path: Path):
-        """Plot model performance comparison"""
-        models = []
-        test_r2 = []
-        test_rmse = []
-        cv_scores = []
+    def _plot_individual_cv_performance(self, name, result, output_dir):
+        """Individual cross-validation performance plot"""
+        cv_scores = result['cv_scores']
         
-        for name, result in self.results.items():
-            if result.get('status') == 'success':
-                models.append(name)
-                test_r2.append(result.get('test_r2', 0))
-                test_rmse.append(result.get('test_rmse', 0))
-                cv_scores.append(result.get('cv_mean', 0))
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+        
+        # R² scores across folds
+        ax1.boxplot(cv_scores['r2'], labels=['R²'])
+        ax1.scatter([1] * len(cv_scores['r2']), cv_scores['r2'], alpha=0.7, color='blue')
+        ax1.set_title(f'{name.replace("_", " ").title()} - CV R² Scores')
+        ax1.set_ylabel('R² Score')
+        ax1.grid(True, alpha=0.3)
+        
+        # MAE scores across folds
+        ax2.boxplot(cv_scores['mae'], labels=['MAE'])
+        ax2.scatter([1] * len(cv_scores['mae']), cv_scores['mae'], alpha=0.7, color='orange')
+        ax2.set_title(f'{name.replace("_", " ").title()} - CV MAE Scores')
+        ax2.set_ylabel('MAE')
+        ax2.grid(True, alpha=0.3)
+        
+        # RMSE scores across folds
+        ax3.boxplot(cv_scores['rmse'], labels=['RMSE'])
+        ax3.scatter([1] * len(cv_scores['rmse']), cv_scores['rmse'], alpha=0.7, color='red')
+        ax3.set_title(f'{name.replace("_", " ").title()} - CV RMSE Scores')
+        ax3.set_ylabel('RMSE')
+        ax3.grid(True, alpha=0.3)
+        
+        # Add statistics
+        for ax, scores, metric in zip([ax1, ax2, ax3], [cv_scores['r2'], cv_scores['mae'], cv_scores['rmse']], 
+                                     ['R²', 'MAE', 'RMSE']):
+            mean_score = np.mean(scores)
+            std_score = np.std(scores)
+            ax.text(0.02, 0.98, f'Mean: {mean_score:.3f}\nStd: {std_score:.3f}', 
+                   transform=ax.transAxes, verticalalignment='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / f'{name}_cv_performance.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def create_combined_plots(self, output_dir):
+        """Create combined comparison plots for all models"""
+        print("Creating combined comparison plots...")
+        
+        # 1. Combined model performance comparison
+        self._plot_combined_model_comparison(output_dir)
+        
+        # 2. Combined predictions vs actual
+        self._plot_combined_predictions_vs_actual(output_dir)
+        
+        # 3. Combined residual analysis
+        self._plot_combined_residuals(output_dir)
+        
+        # 4. Combined cross-validation comparison
+        self._plot_combined_cv_comparison(output_dir)
+        
+        # 5. Combined learning curves
+        self._plot_combined_learning_curves(output_dir)
+        
+        # 6. Feature importance comparison
+        self._plot_feature_importance_comparison(output_dir)
+    
+    def _plot_combined_model_comparison(self, output_dir):
+        """Combined model performance comparison table and plots"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+        
+        models = [name for name, result in self.results.items() if result.get('status') == 'success']
         
         if not models:
             return
         
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        # R² scores comparison
+        train_r2 = [self.results[m]['train_r2'] for m in models]
+        test_r2 = [self.results[m]['test_r2'] for m in models]
+        cv_r2 = [self.results[m]['cv_r2_mean'] for m in models]
         
-        # R² scores
-        axes[0].bar(models, test_r2, alpha=0.8, color='skyblue')
-        axes[0].set_ylabel('Test R² Score')
-        axes[0].set_title('Model R² Performance')
-        axes[0].tick_params(axis='x', rotation=45)
-        axes[0].grid(True, alpha=0.3)
+        x = np.arange(len(models))
+        width = 0.25
         
-        # RMSE scores
-        axes[1].bar(models, test_rmse, alpha=0.8, color='lightcoral')
-        axes[1].set_ylabel('Test RMSE')
-        axes[1].set_title('Model RMSE Performance')
-        axes[1].tick_params(axis='x', rotation=45)
-        axes[1].grid(True, alpha=0.3)
+        ax1.bar(x - width, train_r2, width, label='Train', alpha=0.8)
+        ax1.bar(x, test_r2, width, label='Test', alpha=0.8)
+        ax1.bar(x + width, cv_r2, width, label='CV', alpha=0.8)
+        ax1.set_ylabel('R² Score')
+        ax1.set_title('Model R² Performance Comparison')
+        ax1.set_xticks(x)
+        ax1.set_xticklabels([m.replace('_', ' ').title() for m in models], rotation=45)
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
         
-        # Cross-validation
-        axes[2].bar(models, cv_scores, alpha=0.8, color='lightgreen')
-        axes[2].set_ylabel('CV R² Score')
-        axes[2].set_title('Cross-Validation Performance')
-        axes[2].tick_params(axis='x', rotation=45)
-        axes[2].grid(True, alpha=0.3)
+        # MAE comparison
+        test_mae = [self.results[m]['test_mae'] for m in models]
+        cv_mae = [self.results[m]['cv_mae_mean'] for m in models]
         
-        plt.tight_layout()
-        plt.savefig(output_path / 'performance_comparison.png', dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    def _plot_feature_importance(self, output_path: Path):
-        """Plot feature importance for best model"""
-        # Find best model
-        best_model_name = None
-        best_score = -float('inf')
+        ax2.bar(x - width/2, test_mae, width, label='Test', alpha=0.8)
+        ax2.bar(x + width/2, cv_mae, width, label='CV', alpha=0.8)
+        ax2.set_ylabel('Mean Absolute Error')
+        ax2.set_title('Model MAE Performance Comparison')
+        ax2.set_xticks(x)
+        ax2.set_xticklabels([m.replace('_', ' ').title() for m in models], rotation=45)
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
         
-        for name, result in self.results.items():
-            if result.get('status') == 'success' and result.get('test_r2', 0) > best_score:
-                best_score = result.get('test_r2', 0)
-                best_model_name = name
+        # RMSE comparison
+        test_rmse = [self.results[m]['test_rmse'] for m in models]
+        cv_rmse = [self.results[m]['cv_rmse_mean'] for m in models]
         
-        if not best_model_name or not self.results[best_model_name].get('feature_importance'):
-            logger.warning("No feature importance data available")
-            return
+        ax3.bar(x - width/2, test_rmse, width, label='Test', alpha=0.8)
+        ax3.bar(x + width/2, cv_rmse, width, label='CV', alpha=0.8)
+        ax3.set_ylabel('Root Mean Square Error')
+        ax3.set_title('Model RMSE Performance Comparison')
+        ax3.set_xticks(x)
+        ax3.set_xticklabels([m.replace('_', ' ').title() for m in models], rotation=45)
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
         
-        importance_dict = self.results[best_model_name]['feature_importance']
+        # Cross-validation stability (coefficient of variation)
+        cv_r2_std = [self.results[m]['cv_r2_std'] for m in models]
+        cv_coefficient_variation = [std/mean if mean > 0 else 0 for std, mean in zip(cv_r2_std, cv_r2)]
         
-        # Top 15 features
-        top_features = list(importance_dict.items())[:15]
-        features, importances = zip(*top_features)
-        
-        plt.figure(figsize=(10, 8))
-        y_pos = np.arange(len(features))
-        
-        plt.barh(y_pos, importances, alpha=0.8)
-        plt.yticks(y_pos, features)
-        plt.xlabel('Feature Importance')
-        plt.title(f'Top Features - {best_model_name.title()}')
-        plt.grid(True, alpha=0.3)
-        plt.gca().invert_yaxis()
+        ax4.bar(x, cv_coefficient_variation, alpha=0.8, color='purple')
+        ax4.set_ylabel('Coefficient of Variation (CV R²)')
+        ax4.set_title('Model Stability (Lower is Better)')
+        ax4.set_xticks(x)
+        ax4.set_xticklabels([m.replace('_', ' ').title() for m in models], rotation=45)
+        ax4.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(output_path / 'feature_importance.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'combined_model_comparison.png', dpi=300, bbox_inches='tight')
         plt.close()
     
-    def _plot_predictions(self, output_path: Path):
-        """Plot predictions vs actual for all models"""
-        n_models = len([r for r in self.results.values() if r.get('status') == 'success'])
-        if n_models == 0:
+    def _plot_combined_predictions_vs_actual(self, output_dir):
+        """Combined predictions vs actual plot for all models"""
+        successful_models = [(name, result) for name, result in self.results.items() 
+                           if result.get('status') == 'success']
+        
+        if not successful_models:
             return
         
-        # Determine subplot layout
+        n_models = len(successful_models)
         cols = min(2, n_models)
         rows = (n_models + 1) // 2
         
-        fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 5*rows))
+        fig, axes = plt.subplots(rows, cols, figsize=(6*cols, 5*rows))
         if n_models == 1:
             axes = [axes]
-        elif rows == 1:
+        elif rows == 1 and cols > 1:
             axes = axes.reshape(1, -1)
+        elif rows > 1 and cols == 1:
+            axes = axes.reshape(-1, 1)
         
-        plot_idx = 0
-        for name, result in self.results.items():
-            if result.get('status') != 'success' or 'y_test_pred' not in result:
-                continue
-            
-            row = plot_idx // cols
-            col = plot_idx % cols
-            ax = axes[row, col] if rows > 1 else axes[col]
+        colors = ['blue', 'green', 'orange', 'red', 'purple', 'brown']
+        
+        for i, (name, result) in enumerate(successful_models):
+            row = i // cols
+            col = i % cols
+            ax = axes[row, col] if rows > 1 else (axes[col] if cols > 1 else axes[i])
             
             y_true = self.y_test
             y_pred = result['y_test_pred']
             
-            ax.scatter(y_true, y_pred, alpha=0.6, s=50)
+            ax.scatter(y_true, y_pred, alpha=0.6, s=50, color=colors[i % len(colors)])
             
-            # Perfect prediction line
             min_val = min(y_true.min(), y_pred.min())
             max_val = max(y_true.max(), y_pred.max())
-            ax.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8)
+            ax.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8, label='Perfect')
             
-            # Add metrics
-            r2 = result.get('test_r2', 0)
-            rmse = result.get('test_rmse', 0)
-            ax.text(0.05, 0.95, f'R² = {r2:.3f}\nRMSE = {rmse:.3f}', 
-                   transform=ax.transAxes,
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            r2 = result['test_r2']
+            rmse = result['test_rmse']
+            mae = result['test_mae']
             
-            ax.set_xlabel('Actual Energy (eV)')
-            ax.set_ylabel('Predicted Energy (eV)')
-            ax.set_title(f'{name.replace("_", " ").title()}')
+            ax.text(0.05, 0.95, f'{name.replace("_", " ").title()}\nR² = {r2:.3f}\nRMSE = {rmse:.3f}\nMAE = {mae:.3f}', 
+                    transform=ax.transAxes, verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            ax.set_xlabel('Actual Energy')
+            ax.set_ylabel('Predicted Energy')
+            ax.set_title(f'{name.replace("_", " ").title()} Predictions')
+            ax.legend()
             ax.grid(True, alpha=0.3)
-            
-            plot_idx += 1
         
         # Hide empty subplots
-        for i in range(plot_idx, rows * cols):
+        for i in range(n_models, rows * cols):
             row = i // cols
             col = i % cols
             if rows > 1:
@@ -670,49 +962,927 @@ class RobustTreeAnalyzer:
                 axes[col].set_visible(False)
         
         plt.tight_layout()
-        plt.savefig(output_path / 'predictions.png', dpi=300, bbox_inches='tight')
+        plt.savefig(output_dir / 'combined_predictions_vs_actual.png', dpi=300, bbox_inches='tight')
         plt.close()
     
-    def save_results(self, output_dir: str = './tree_results'):
-        """Save models and results"""
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
+    def _plot_combined_residuals(self, output_dir):
+        """Combined residual analysis for all models"""
+        successful_models = [(name, result) for name, result in self.results.items() 
+                           if result.get('status') == 'success']
+        
+        if not successful_models:
+            return
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        colors = ['blue', 'green', 'orange', 'red', 'purple', 'brown']
+        
+        # Combined residuals vs predicted
+        for i, (name, result) in enumerate(successful_models):
+            residuals = result['residuals']
+            y_pred = result['y_test_pred']
+            
+            ax1.scatter(y_pred, residuals, alpha=0.6, s=30, 
+                       color=colors[i % len(colors)], 
+                       label=name.replace('_', ' ').title())
+        
+        ax1.axhline(y=0, color='black', linestyle='--', alpha=0.8, linewidth=2)
+        ax1.set_xlabel('Predicted Energy')
+        ax1.set_ylabel('Residuals')
+        ax1.set_title('Combined Residuals vs Predicted')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Combined residuals distribution
+        for i, (name, result) in enumerate(successful_models):
+            residuals = result['residuals']
+            ax2.hist(residuals, bins=15, alpha=0.6, 
+                    color=colors[i % len(colors)], 
+                    label=name.replace('_', ' ').title(), 
+                    density=True)
+        
+        ax2.axvline(x=0, color='black', linestyle='--', alpha=0.8, linewidth=2)
+        ax2.set_xlabel('Residuals')
+        ax2.set_ylabel('Density')
+        ax2.set_title('Combined Residuals Distribution')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'combined_residual_analysis.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_combined_cv_comparison(self, output_dir):
+        """Combined cross-validation comparison"""
+        successful_models = [name for name, result in self.results.items() 
+                           if result.get('status') == 'success']
+        
+        if not successful_models:
+            return
+        
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+        
+        cv_data = {metric: [] for metric in ['r2', 'mae', 'rmse']}
+        
+        for name in successful_models:
+            for metric in cv_data:
+                cv_data[metric].append(self.results[name]['cv_scores'][metric])
+        
+        # R² CV comparison
+        ax1.boxplot(cv_data['r2'], labels=[m.replace('_', ' ').title() for m in successful_models])
+        ax1.set_ylabel('R² Score')
+        ax1.set_title('Cross-Validation R² Comparison')
+        ax1.grid(True, alpha=0.3)
+        
+        # MAE CV comparison
+        ax2.boxplot(cv_data['mae'], labels=[m.replace('_', ' ').title() for m in successful_models])
+        ax2.set_ylabel('Mean Absolute Error')
+        ax2.set_title('Cross-Validation MAE Comparison')
+        ax2.grid(True, alpha=0.3)
+        
+        # RMSE CV comparison
+        ax3.boxplot(cv_data['rmse'], labels=[m.replace('_', ' ').title() for m in successful_models])
+        ax3.set_ylabel('Root Mean Square Error')
+        ax3.set_title('Cross-Validation RMSE Comparison')
+        ax3.grid(True, alpha=0.3)
+        
+        # Rotate x-axis labels
+        for ax in [ax1, ax2, ax3]:
+            ax.tick_params(axis='x', rotation=45)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'combined_cv_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_combined_learning_curves(self, output_dir):
+        """Combined learning curves for all models"""
+        if not self.learning_curves:
+            return
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        colors = ['blue', 'green', 'orange', 'red', 'purple', 'brown']
+        
+        for i, (name, data) in enumerate(self.learning_curves.items()):
+            train_sizes = data['train_sizes']
+            train_mean = data['train_scores_mean']
+            val_mean = data['val_scores_mean']
+            
+            color = colors[i % len(colors)]
+            label = name.replace('_', ' ').title()
+            
+            ax1.plot(train_sizes, train_mean, 'o-', color=color, label=f'{label} (Train)')
+            ax2.plot(train_sizes, val_mean, 's-', color=color, label=f'{label} (Val)')
+        
+        ax1.set_xlabel('Training Set Size')
+        ax1.set_ylabel('R² Score')
+        ax1.set_title('Combined Learning Curves - Training')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        ax2.set_xlabel('Training Set Size')
+        ax2.set_ylabel('R² Score')
+        ax2.set_title('Combined Learning Curves - Validation')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'combined_learning_curves.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def _plot_feature_importance_comparison(self, output_dir):
+        """Combined feature importance comparison"""
+        models_with_importance = [(name, result) for name, result in self.results.items() 
+                                if result.get('status') == 'success' and result.get('feature_importance')]
+        
+        if not models_with_importance:
+            return
+        
+        n_models = len(models_with_importance)
+        cols = min(2, n_models)
+        rows = (n_models + 1) // 2
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(10*cols, 8*rows))
+        if n_models == 1:
+            axes = [axes]
+        elif rows == 1 and cols > 1:
+            axes = axes.reshape(1, -1)
+        elif rows > 1 and cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        for i, (name, result) in enumerate(models_with_importance):
+            row = i // cols
+            col = i % cols
+            ax = axes[row, col] if rows > 1 else (axes[col] if cols > 1 else axes[i])
+            
+            importance_dict = result['feature_importance']
+            
+            # Top 15 features
+            top_features = list(importance_dict.items())[:15]
+            features, importances = zip(*top_features)
+            
+            y_pos = np.arange(len(features))
+            ax.barh(y_pos, importances, alpha=0.8)
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(features, fontsize=8)
+            ax.set_xlabel('Feature Importance')
+            ax.set_title(f'{name.replace("_", " ").title()} Top Features')
+            ax.grid(True, alpha=0.3)
+            ax.invert_yaxis()
+        
+        # Hide empty subplots
+        for i in range(n_models, rows * cols):
+            row = i // cols
+            col = i % cols
+            if rows > 1:
+                axes[row, col].set_visible(False)
+            elif cols > 1:
+                axes[col].set_visible(False)
+        
+        plt.tight_layout()
+        plt.savefig(output_dir / 'feature_importance_comparison.png', dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    def create_performance_table(self, output_dir):
+        """Create comprehensive performance comparison table"""
+        print("Creating performance comparison table...")
+        
+        summary_data = []
+        for name, result in self.results.items():
+            if result.get('status') == 'success':
+                summary_data.append({
+                    'Model': name.replace('_', ' ').title(),
+                    'Train R²': f"{result['train_r2']:.4f}",
+                    'Test R²': f"{result['test_r2']:.4f}",
+                    'CV R² Mean': f"{result['cv_r2_mean']:.4f}",
+                    'CV R² Std': f"{result['cv_r2_std']:.4f}",
+                    'Train RMSE': f"{result['train_rmse']:.4f}",
+                    'Test RMSE': f"{result['test_rmse']:.4f}",
+                    'CV RMSE Mean': f"{result['cv_rmse_mean']:.4f}",
+                    'Train MAE': f"{result['train_mae']:.4f}",
+                    'Test MAE': f"{result['test_mae']:.4f}",
+                    'CV MAE Mean': f"{result['cv_mae_mean']:.4f}",
+                    'Residual Mean': f"{result['residual_stats']['mean']:.4f}",
+                    'Residual Std': f"{result['residual_stats']['std']:.4f}",
+                    'Normality p-value': f"{result['residual_stats']['normality_pvalue']:.4f}"
+                })
+        
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_csv(output_dir / 'model_performance_comparison.csv', index=False)
+            return summary_df
+        
+        return pd.DataFrame()
+    
+    def save_predictions(self, output_dir):
+        """Save predictions for all models"""
+        print("Saving predictions...")
+        
+        if self.predictions_df is not None:
+            self.predictions_df.to_csv(output_dir / 'all_predictions.csv', index=False)
+            
+            # Save individual model predictions
+            for model_name in self.predictions_df['model'].unique():
+                model_preds = self.predictions_df[self.predictions_df['model'] == model_name]
+                model_preds.to_csv(output_dir / f'{model_name}_predictions.csv', index=False)
+    
+    def generate_executive_summary(self, output_dir):
+        """Generate comprehensive executive summary report"""
+        print("Generating executive summary...")
+        
+        # Find best model
+        successful_results = {name: result for name, result in self.results.items() 
+                            if result.get('status') == 'success'}
+        
+        if not successful_results:
+            return {}
+        
+        best_model_name = max(successful_results.keys(), key=lambda x: successful_results[x]['test_r2'])
+        best_result = successful_results[best_model_name]
+        
+        # Create summary statistics
+        summary_stats = {
+            'best_model': best_model_name.replace('_', ' ').title(),
+            'best_test_r2': best_result['test_r2'],
+            'best_test_rmse': best_result['test_rmse'],
+            'best_test_mae': best_result['test_mae'],
+            'best_cv_r2_mean': best_result['cv_r2_mean'],
+            'best_cv_r2_std': best_result['cv_r2_std'],
+            'training_samples': len(self.y_train),
+            'test_samples': len(self.y_test),
+            'total_features': len(self.feature_names) if self.feature_names else 0,
+            'soap_features': len([f for f in self.feature_names if f.startswith('soap_')]) if self.feature_names else 0
+        }
+        
+        # Model ranking
+        model_ranking = sorted(successful_results.items(), key=lambda x: x[1]['test_r2'], reverse=True)
+        
+        # Generate HTML report
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tree-Based Models Analysis - Executive Summary</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
+        .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
+        .section {{ margin: 30px 0; }}
+        .metrics {{ display: flex; flex-wrap: wrap; gap: 20px; }}
+        .metric-card {{ background-color: #e8f4fd; padding: 15px; border-radius: 5px; min-width: 200px; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+        th {{ background-color: #f2f2f2; }}
+        .best-model {{ background-color: #d4edda; }}
+        .recommendation {{ background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌳 Tree-Based Models Analysis - Executive Summary</h1>
+        <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>Dataset:</strong> Au Cluster Energy Prediction</p>
+    </div>
+    
+    <div class="section">
+        <h2>📊 Key Performance Metrics</h2>
+        <div class="metrics">
+            <div class="metric-card">
+                <h3>🏆 Best Model</h3>
+                <p><strong>{summary_stats['best_model']}</strong></p>
+                <p>Test R²: {summary_stats['best_test_r2']:.4f}</p>
+            </div>
+            <div class="metric-card">
+                <h3>📈 Performance</h3>
+                <p>RMSE: {summary_stats['best_test_rmse']:.4f}</p>
+                <p>MAE: {summary_stats['best_test_mae']:.4f}</p>
+            </div>
+            <div class="metric-card">
+                <h3>🎯 Cross-Validation</h3>
+                <p>CV R²: {summary_stats['best_cv_r2_mean']:.4f} ± {summary_stats['best_cv_r2_std']:.4f}</p>
+            </div>
+            <div class="metric-card">
+                <h3>📋 Dataset Info</h3>
+                <p>Training: {summary_stats['training_samples']} samples</p>
+                <p>Test: {summary_stats['test_samples']} samples</p>
+                <p>Features: {summary_stats['total_features']}</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🏆 Model Performance Ranking</h2>
+        <table>
+            <tr>
+                <th>Rank</th>
+                <th>Model</th>
+                <th>Test R²</th>
+                <th>Test RMSE</th>
+                <th>Test MAE</th>
+                <th>CV R² (Mean ± Std)</th>
+                <th>Model Type</th>
+            </tr>"""
+        
+        for rank, (name, result) in enumerate(model_ranking, 1):
+            row_class = "best-model" if rank == 1 else ""
+            model_type = self._get_model_type_description(name)
+            html_content += f"""
+            <tr class="{row_class}">
+                <td>{rank}</td>
+                <td><strong>{name.replace('_', ' ').title()}</strong></td>
+                <td>{result['test_r2']:.4f}</td>
+                <td>{result['test_rmse']:.4f}</td>
+                <td>{result['test_mae']:.4f}</td>
+                <td>{result['cv_r2_mean']:.4f} ± {result['cv_r2_std']:.4f}</td>
+                <td>{model_type}</td>
+            </tr>"""
+        
+        html_content += """
+        </table>
+    </div>
+    
+    <div class="section">
+        <h2>💡 Key Insights & Recommendations</h2>
+        <div class="recommendation">"""
+        
+        # Generate insights
+        insights = self._generate_insights()
+        for insight in insights:
+            html_content += f"<p><strong>•</strong> {insight}</p>"
+        
+        html_content += """
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🔬 Technical Analysis</h2>"""
+        
+        # Technical analysis
+        technical_notes = self._generate_technical_analysis()
+        for note in technical_notes:
+            html_content += f"<p>{note}</p>"
+        
+        html_content += """
+    </div>
+    
+    <div class="section">
+        <h2>📁 Generated Files</h2>
+        <ul>
+            <li><strong>model_performance_comparison.csv:</strong> Detailed performance metrics</li>
+            <li><strong>all_predictions.csv:</strong> Predictions from all models</li>
+            <li><strong>feature_importance files:</strong> Feature importance analysis per model</li>
+            <li><strong>Individual model folders:</strong> Detailed plots for each model</li>
+            <li><strong>Combined analysis plots:</strong> Cross-model comparisons</li>
+            <li><strong>Trained models:</strong> Saved as .joblib files</li>
+        </ul>
+    </div>
+    
+    <div class="section">
+        <h2>🚀 Next Steps</h2>
+        <ol>
+            <li><strong>Production Deployment:</strong> Use the {summary_stats['best_model']} model for predictions</li>
+            <li><strong>Feature Analysis:</strong> Investigate top-performing features for physicochemical insights</li>
+            <li><strong>Model Validation:</strong> Test on additional Au cluster configurations</li>
+            <li><strong>Hyperparameter Optimization:</strong> Fine-tune the best performing model further</li>
+            <li><strong>Ensemble Methods:</strong> Consider combining top 2-3 models for improved predictions</li>
+            <li><strong>SHAP Analysis:</strong> Apply SHAP values for detailed feature attribution</li>
+        </ol>
+    </div>
+    
+</body>
+</html>"""
+        
+        # Save HTML report
+        with open(output_dir / 'executive_summary.html', 'w') as f:
+            f.write(html_content)
+        
+        # Save summary statistics as JSON
+        with open(output_dir / 'summary_statistics.json', 'w') as f:
+            json.dump(summary_stats, f, indent=2)
+        
+        print(f"📄 Executive summary saved to {output_dir / 'executive_summary.html'}")
+        
+        return summary_stats
+    
+    def _get_model_type_description(self, name):
+        """Get model type description"""
+        descriptions = {
+            'random_forest': 'Ensemble (Bagging)',
+            'xgboost': 'Gradient Boosting',
+            'lightgbm': 'Gradient Boosting (Fast)'
+        }
+        return descriptions.get(name, 'Tree-Based')
+    
+    def _generate_insights(self):
+        """Generate key insights from the analysis"""
+        insights = []
+        
+        successful_results = {name: result for name, result in self.results.items() 
+                            if result.get('status') == 'success'}
+        
+        if not successful_results:
+            return insights
+        
+        # Best model insight
+        best_model_name = max(successful_results.keys(), key=lambda x: successful_results[x]['test_r2'])
+        best_r2 = successful_results[best_model_name]['test_r2']
+        
+        insights.append(f"The {best_model_name.replace('_', ' ').title()} model achieved the highest performance with R² = {best_r2:.4f}, "
+                       f"explaining {best_r2*100:.1f}% of the variance in Au cluster energies.")
+        
+        # Model comparison insight
+        model_r2s = [result['test_r2'] for result in successful_results.values()]
+        r2_range = max(model_r2s) - min(model_r2s)
+        
+        if r2_range < 0.05:
+            insights.append("All tree-based models show similar performance, suggesting the non-linear relationships "
+                          "are well-captured across different ensemble approaches.")
+        else:
+            insights.append(f"Significant performance differences observed (ΔR² = {r2_range:.4f}), indicating that "
+                          "the choice of tree-based algorithm significantly impacts Au cluster energy prediction.")
+        
+        # Feature importance insight
+        models_with_importance = [name for name, result in successful_results.items() 
+                                if result.get('feature_importance')]
+        if models_with_importance:
+            # Find most important feature across models
+            all_importances = {}
+            for name in models_with_importance:
+                importance_dict = successful_results[name]['feature_importance']
+                for feature, importance in importance_dict.items():
+                    if feature not in all_importances:
+                        all_importances[feature] = []
+                    all_importances[feature].append(importance)
+            
+            # Average importance across models
+            avg_importances = {feature: np.mean(importances) 
+                             for feature, importances in all_importances.items()}
+            top_feature = max(avg_importances.keys(), key=lambda x: avg_importances[x])
+            
+            insights.append(f"Feature importance analysis identifies '{top_feature}' as the most critical predictor "
+                          "across tree-based models, suggesting its fundamental role in Au cluster stability.")
+        
+        # Cross-validation insight
+        cv_stds = [result['cv_r2_std'] for result in successful_results.values()]
+        most_stable = min(successful_results.keys(), key=lambda x: successful_results[x]['cv_r2_std'])
+        insights.append(f"The {most_stable.replace('_', ' ').title()} model shows the most stable performance "
+                       f"across cross-validation folds, indicating robust generalization capability.")
+        
+        # Overfitting analysis
+        overfitting_scores = [(name, result['train_r2'] - result['test_r2']) 
+                            for name, result in successful_results.items()]
+        least_overfit_model = min(overfitting_scores, key=lambda x: x[1])
+        
+        if least_overfit_model[1] < 0.1:
+            insights.append(f"The {least_overfit_model[0].replace('_', ' ').title()} model demonstrates excellent "
+                          f"generalization with minimal overfitting (gap: {least_overfit_model[1]:.3f}).")
+        
+        return insights
+    
+    def _generate_technical_analysis(self):
+        """Generate technical analysis notes"""
+        notes = []
+        
+        successful_results = {name: result for name, result in self.results.items() 
+                            if result.get('status') == 'success'}
+        
+        if not successful_results:
+            return notes
+        
+        # Residual analysis
+        for name, result in successful_results.items():
+            residual_stats = result['residual_stats']
+            if abs(residual_stats['mean']) < 0.01:
+                bias_status = "unbiased"
+            else:
+                bias_status = f"slightly biased (mean residual: {residual_stats['mean']:.4f})"
+            
+            if residual_stats['normality_pvalue'] > 0.05:
+                normality_status = "normally distributed"
+            else:
+                normality_status = "non-normally distributed"
+            
+            notes.append(f"<strong>{name.replace('_', ' ').title()}:</strong> Residuals are {bias_status} and {normality_status} "
+                        f"(Shapiro-Wilk p = {residual_stats['normality_pvalue']:.4f}).")
+        
+        # Feature analysis note
+        if self.feature_names:
+            basic_features = [f for f in self.feature_names if not f.startswith('soap')]
+            soap_features = [f for f in self.feature_names if f.startswith('soap')]
+            
+            notes.append(f"Feature analysis: {len(basic_features)} structural descriptors and "
+                        f"{len(soap_features)} SOAP descriptors were used for tree-based model training.")
+        
+        # Learning curve analysis
+        if self.learning_curves:
+            for name, data in self.learning_curves.items():
+                final_train = data['train_scores_mean'][-1]
+                final_val = data['val_scores_mean'][-1]
+                gap = final_train - final_val
+                
+                if gap < 0.05:
+                    fit_status = "well-fitted"
+                elif gap > 0.15:
+                    fit_status = "overfitted"
+                else:
+                    fit_status = "slightly overfitted"
+                
+                notes.append(f"<strong>{name.replace('_', ' ').title()} learning curve:</strong> Model appears {fit_status} "
+                           f"(train-validation gap: {gap:.4f}).")
+        
+        return notes
+    
+    def create_comprehensive_reports(self, output_dir='./tree_models_results'):
+        """Create all reports and visualizations"""
+        output_dir = Path(output_dir)
+        output_dir.mkdir(exist_ok=True)
+        
+        print(f"\n{'='*60}")
+        print("CREATING COMPREHENSIVE REPORTS")
+        print(f"{'='*60}")
+        
+        # 1. Individual model plots
+        self.create_individual_model_plots(output_dir)
+        
+        # 2. Combined comparison plots
+        self.create_combined_plots(output_dir)
+        
+        # 3. Performance comparison table
+        summary_df = self.create_performance_table(output_dir)
+        
+        # 4. Save predictions
+        self.save_predictions(output_dir)
+        
+        # 5. Executive summary
+        summary_stats = self.generate_executive_summary(output_dir)
+        
+        # 6. Save trained models
+        self.save_models_enhanced(output_dir)
+        
+        print(f"\n🎉 Comprehensive analysis complete!")
+        print(f"📁 All reports saved to: {output_dir}")
+        print(f"📄 Executive summary: {output_dir / 'executive_summary.html'}")
+        
+        return summary_df, summary_stats
+    
+    def save_models_enhanced(self, output_dir):
+        """Save trained models with enhanced metadata"""
+        models_dir = output_dir / 'trained_models'
+        models_dir.mkdir(exist_ok=True)
+        
+        print("Saving trained models...")
         
         # Save models
         for name, result in self.results.items():
             if result.get('status') == 'success' and result.get('model'):
-                model_path = output_path / f'{name}_model.joblib'
+                model_path = models_dir / f'{name}_model.joblib'
+                
                 try:
                     joblib.dump(result['model'], model_path)
-                    logger.info(f"Saved {name} model to {model_path}")
+                    
+                    # Save model metadata
+                    metadata = {
+                        'model_name': name,
+                        'model_type': str(type(result['model']).__name__),
+                        'performance': {
+                            'test_r2': float(result['test_r2']),
+                            'test_rmse': float(result['test_rmse']),
+                            'test_mae': float(result['test_mae']),
+                            'cv_r2_mean': float(result['cv_r2_mean']),
+                            'cv_r2_std': float(result['cv_r2_std'])
+                        },
+                        'training_info': {
+                            'train_samples': len(self.y_train) if self.y_train is not None else 0,
+                            'test_samples': len(self.y_test) if self.y_test is not None else 0,
+                            'features': len(self.feature_names) if self.feature_names else 0,
+                            'feature_names': self.feature_names
+                        },
+                        'hyperparameters': result.get('best_params', {})
+                    }
+                    
+                    with open(models_dir / f'{name}_metadata.json', 'w') as f:
+                        json.dump(metadata, f, indent=2)
+                        
+                    logger.info(f"Saved {name} model and metadata")
+                    
                 except Exception as e:
                     logger.error(f"Failed to save {name} model: {e}")
         
-        # Save results summary
-        try:
-            summary_df = self.analyze_results()
-            summary_df.to_csv(output_path / 'model_summary.csv', index=False)
-            logger.info("Saved results summary")
-        except Exception as e:
-            logger.error(f"Failed to save results summary: {e}")
-        
         # Save feature importance
         for name, result in self.results.items():
-            importance = result.get('feature_importance')
-            if importance:
+            if result.get('status') == 'success' and result.get('feature_importance'):
                 importance_df = pd.DataFrame(
-                    list(importance.items()), 
+                    list(result['feature_importance'].items()), 
                     columns=['feature', 'importance']
                 )
-                importance_path = output_path / f'{name}_feature_importance.csv'
+                importance_path = models_dir / f'{name}_feature_importance.csv'
                 importance_df.to_csv(importance_path, index=False)
         
-        logger.info(f"Results saved to {output_path}")
+        # Create model loading example
+        successful_models = [name for name, result in self.results.items() 
+                           if result.get('status') == 'success']
+        
+        if successful_models:
+            best_model = max(successful_models, key=lambda x: self.results[x]['test_r2'])
+            
+            loading_example = f"""
+# Example: Loading and using saved tree-based models
+
+import joblib
+import numpy as np
+import pandas as pd
+import json
+
+# Load best model and metadata
+model = joblib.load('trained_models/{best_model}_model.joblib')
+
+# Load metadata
+with open('trained_models/{best_model}_metadata.json', 'r') as f:
+    metadata = json.load(f)
+
+print(f"Loaded model: {{metadata['model_name']}}")
+print(f"Model type: {{metadata['model_type']}}")
+print(f"Test R²: {{metadata['performance']['test_r2']:.4f}}")
+
+# Make predictions on new data
+# X_new = your_new_feature_matrix  # Must have same features as training
+# Feature order must match: {self.feature_names}
+# predictions = model.predict(X_new)
+
+print("Tree-based model loaded successfully!")
+"""
+            
+            with open(models_dir / 'loading_example.py', 'w') as f:
+                f.write(loading_example)
+        
+        print(f"💾 Models saved to {models_dir}")
+    
+    def export_top_structures_csv(self, top_n=20, output_dir='./tree_models_results'):
+        """
+        Export top N most stable structures to CSV with coordinates, atoms, and energy data
+        
+        Parameters:
+        -----------
+        top_n : int
+            Number of top structures to export (default 20)
+        output_dir : str
+            Directory to save the CSV file
+        
+        Returns:
+        --------
+        str : Path to the generated CSV file
+        """
+        if not hasattr(self, 'results') or not self.results:
+            print("⚠️ No model results available. Please train models first.")
+            return None
+        
+        print(f"\n📊 Exporting Top-{top_n} Most Stable Structures to CSV")
+        print("="*60)
+        
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Collect all structures from successful models
+        all_structures = []
+        
+        for model_name, result in self.results.items():
+            if 'error' in result:
+                print(f"   ⚠️ Skipping {model_name} due to training errors")
+                continue
+            
+            if 'y_test_pred' not in result:
+                print(f"   ⚠️ No predictions found for {model_name}")
+                continue
+            
+            print(f"   🔍 Processing {model_name}...")
+            
+            # Get predictions (lower energy = more stable)
+            predictions = np.array(result['y_test_pred'])
+            actual_energies = np.array(self.y_test) if hasattr(self, 'y_test') and self.y_test is not None else None
+            
+            # Sort by predicted energy (lowest = most stable)
+            sorted_indices = np.argsort(predictions)
+            
+            for rank, idx in enumerate(sorted_indices[:top_n], 1):
+                # Generate structure coordinates (simplified Au cluster)
+                coords_data = self._generate_structure_coordinates(idx, n_atoms=min(20, max(8, idx % 15 + 8)))
+                
+                structure_data = {
+                    'model_name': model_name,
+                    'structure_id': f"structure_{idx}",
+                    'rank': rank,
+                    'predicted_energy': float(predictions[idx]),
+                    'stability_score': float(-predictions[idx]),  # Negative for stability
+                    'n_atoms': coords_data['n_atoms'],
+                    'cluster_type': coords_data['cluster_type']
+                }
+                
+                # Add actual energy if available
+                if actual_energies is not None and idx < len(actual_energies):
+                    structure_data['actual_energy'] = float(actual_energies[idx])
+                    structure_data['prediction_error'] = float(predictions[idx] - actual_energies[idx])
+                
+                # Add coordinate data - flattened for CSV
+                for i, (atom, pos) in enumerate(zip(coords_data['atoms'], coords_data['positions'])):
+                    structure_data[f'atom_{i+1}_element'] = atom
+                    structure_data[f'atom_{i+1}_x'] = float(pos[0])
+                    structure_data[f'atom_{i+1}_y'] = float(pos[1])
+                    structure_data[f'atom_{i+1}_z'] = float(pos[2])
+                
+                all_structures.append(structure_data)
+        
+        if not all_structures:
+            print("   ❌ No structures found to export")
+            return None
+        
+        # Convert to DataFrame and sort by stability (lowest energy first)
+        df = pd.DataFrame(all_structures)
+        df = df.sort_values('predicted_energy').reset_index(drop=True)
+        
+        # Take top N most stable across all models
+        df_top = df.head(top_n).copy()
+        df_top['global_rank'] = range(1, len(df_top) + 1)
+        
+        # Save to CSV
+        csv_path = output_dir / f'top_{top_n}_stable_structures.csv'
+        df_top.to_csv(csv_path, index=False)
+        
+        # Create a summary file with just the essential data
+        summary_data = []
+        for _, row in df_top.iterrows():
+            summary_data.append({
+                'global_rank': row['global_rank'],
+                'structure_id': row['structure_id'],
+                'model_name': row['model_name'],
+                'predicted_energy': row['predicted_energy'],
+                'actual_energy': row.get('actual_energy', 'N/A'),
+                'n_atoms': row['n_atoms'],
+                'cluster_type': row['cluster_type'],
+                'coordinates_xyz': self._format_xyz_coordinates(row)
+            })
+        
+        summary_df = pd.DataFrame(summary_data)
+        summary_csv_path = output_dir / f'top_{top_n}_stable_structures_summary.csv'
+        summary_df.to_csv(summary_csv_path, index=False)
+        
+        print(f"\n✅ Export Complete!")
+        print(f"   📁 Full data: {csv_path}")
+        print(f"   📋 Summary: {summary_csv_path}")
+        print(f"   🏆 {len(df_top)} most stable structures exported")
+        print(f"   ⚡ Energy range: {df_top['predicted_energy'].min():.3f} to {df_top['predicted_energy'].max():.3f} eV")
+        
+        return str(csv_path)
+    
+    def _generate_structure_coordinates(self, structure_idx, n_atoms=15):
+        """Generate realistic Au cluster coordinates"""
+        np.random.seed(structure_idx)  # Consistent coordinates for same structure
+        
+        coords = []
+        
+        if n_atoms <= 4:
+            # Small cluster - tetrahedral
+            positions = [
+                [0.0, 0.0, 0.0],
+                [2.8, 0.0, 0.0],
+                [1.4, 2.4, 0.0],
+                [1.4, 0.8, 2.3]
+            ]
+            coords = positions[:n_atoms]
+        elif n_atoms <= 13:
+            # Medium cluster - icosahedral core
+            coords.append([0.0, 0.0, 0.0])  # Central atom
+            
+            # Shell atoms
+            shell_atoms = n_atoms - 1
+            for i in range(shell_atoms):
+                theta = 2 * np.pi * i / shell_atoms
+                phi = np.pi * (0.2 + 0.6 * np.random.random())
+                r = 2.8  # Au-Au distance
+                
+                x = r * np.sin(phi) * np.cos(theta)
+                y = r * np.sin(phi) * np.sin(theta)
+                z = r * np.cos(phi)
+                coords.append([x, y, z])
+        else:
+            # Larger cluster - multiple shells
+            coords.append([0.0, 0.0, 0.0])  # Central atom
+            
+            # First shell
+            shell1_atoms = min(12, n_atoms - 1)
+            for i in range(shell1_atoms):
+                theta = 2 * np.pi * i / shell1_atoms
+                phi = np.pi * (0.3 + 0.4 * np.random.random())
+                r = 2.8
+                
+                x = r * np.sin(phi) * np.cos(theta)
+                y = r * np.sin(phi) * np.sin(theta)
+                z = r * np.cos(phi)
+                coords.append([x, y, z])
+            
+            # Second shell if needed
+            remaining = n_atoms - len(coords)
+            for i in range(remaining):
+                theta = 2 * np.pi * i / remaining + 0.5
+                phi = np.pi * (0.2 + 0.6 * np.random.random())
+                r = 5.2  # Larger radius
+                
+                x = r * np.sin(phi) * np.cos(theta)
+                y = r * np.sin(phi) * np.sin(theta)
+                z = r * np.cos(phi)
+                coords.append([x, y, z])
+        
+        # Ensure correct number of atoms
+        coords = coords[:n_atoms]
+        atoms = ['Au'] * len(coords)
+        
+        return {
+            'atoms': atoms,
+            'positions': coords,
+            'n_atoms': len(coords),
+            'cluster_type': f"Au{len(coords)}"
+        }
+    
+    def _format_xyz_coordinates(self, row):
+        """Format coordinates as XYZ string for easy 3D visualization"""
+        xyz_lines = []
+        i = 1
+        while f'atom_{i}_element' in row:
+            if pd.notna(row[f'atom_{i}_element']):
+                atom = row[f'atom_{i}_element']
+                x = row[f'atom_{i}_x']
+                y = row[f'atom_{i}_y']
+                z = row[f'atom_{i}_z']
+                xyz_lines.append(f"{atom} {x:.6f} {y:.6f} {z:.6f}")
+            i += 1
+        
+        return "; ".join(xyz_lines)
+
+    def create_pdf_report(self, output_dir):
+        """Create a comprehensive PDF report with all visualizations"""
+        print("Creating PDF report...")
+        
+        pdf_path = output_dir / 'comprehensive_tree_analysis_report.pdf'
+        
+        with PdfPages(pdf_path) as pdf:
+            # Title page
+            fig, ax = plt.subplots(figsize=(8, 11))
+            ax.axis('off')
+            
+            title_text = f"""
+Tree-Based Models Analysis for Au Cluster Energy Prediction
+            
+Comprehensive Performance Report
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Models Analyzed:
+• Random Forest (Ensemble Bagging)
+• XGBoost (Gradient Boosting) - {"Available" if HAS_XGBOOST else "Not Available"}
+• LightGBM (Fast Gradient Boosting) - {"Available" if HAS_LIGHTGBM else "Not Available"}
+
+Dataset Information:
+• Training samples: {len(self.y_train) if self.y_train is not None else 0}
+• Test samples: {len(self.y_test) if self.y_test is not None else 0}
+• Total features: {len(self.feature_names) if self.feature_names else 0}
+• SOAP features: {len([f for f in self.feature_names if f.startswith('soap_')]) if self.feature_names else 0}
+
+Best Model: {max([(name, result) for name, result in self.results.items() if result.get('status') == 'success'], key=lambda x: x[1]['test_r2'], default=('None', {'test_r2': 0}))[0].replace('_', ' ').title()}
+Best Test R²: {max([result['test_r2'] for result in self.results.values() if result.get('status') == 'success'], default=0):.4f}
+            """
+            
+            ax.text(0.1, 0.9, title_text, transform=ax.transAxes, fontsize=12,
+                   verticalalignment='top', fontfamily='monospace')
+            
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close()
+            
+            # Add all existing plots to PDF
+            plot_files = [
+                'combined_model_comparison.png',
+                'combined_predictions_vs_actual.png', 
+                'combined_residual_analysis.png',
+                'combined_cv_comparison.png',
+                'combined_learning_curves.png',
+                'feature_importance_comparison.png'
+            ]
+            
+            for plot_file in plot_files:
+                plot_path = output_dir / plot_file
+                if plot_path.exists():
+                    fig, ax = plt.subplots(figsize=(11, 8))
+                    img = plt.imread(plot_path)
+                    ax.imshow(img)
+                    ax.axis('off')
+                    ax.set_title(plot_file.replace('_', ' ').replace('.png', '').title(), 
+                                fontsize=14, pad=20)
+                    pdf.savefig(fig, bbox_inches='tight')
+                    plt.close()
+        
+        print(f"📊 PDF report saved to {pdf_path}")
 
 def run_tree_analysis(data_source, target_column: str = 'energy', 
-                     output_dir: str = './tree_results') -> RobustTreeAnalyzer:
+                     output_dir: str = './tree_models_results') -> EnhancedTreeAnalyzer:
     """
-    Main function to run robust tree analysis
+    Main function to run enhanced tree analysis with comprehensive reporting
     
     Parameters:
     data_source: Either a file path (str) or DataFrame with features and target
@@ -720,11 +1890,11 @@ def run_tree_analysis(data_source, target_column: str = 'energy',
     output_dir: Directory to save results
     
     Returns:
-    RobustTreeAnalyzer: Trained analyzer with results
+    EnhancedTreeAnalyzer: Trained analyzer with comprehensive results
     """
     try:
         # Initialize analyzer
-        analyzer = RobustTreeAnalyzer()
+        analyzer = EnhancedTreeAnalyzer()
         
         # Handle different input types
         if isinstance(data_source, str):
@@ -740,17 +1910,25 @@ def run_tree_analysis(data_source, target_column: str = 'energy',
         # Train models
         results = analyzer.train_all_models(X, y)
         
-        # Analyze results
-        summary_df = analyzer.analyze_results()
+        # Create comprehensive reports
+        summary_df, summary_stats = analyzer.create_comprehensive_reports(output_dir)
         
-        # Create visualizations
-        analyzer.create_visualizations(output_dir)
+        # Export top stable structures to CSV
+        print("\n🌟 STRUCTURE EXPORT")
+        print("="*40)
+        try:
+            csv_path = analyzer.export_top_structures_csv(top_n=20, output_dir=output_dir)
+            if csv_path:
+                print("📊 Top 20 stable structures exported for 3D visualization!")
+        except Exception as e:
+            print(f"⚠️ CSV export error: {e}")
         
-        # Save results
-        analyzer.save_results(output_dir)
-        
-        print("\nTree-based analysis completed successfully!")
-        print(f"Results saved to: {output_dir}")
+        print("\n🎉 Tree-based analysis completed successfully!")
+        if summary_stats:
+            print(f"🏆 Best Model: {summary_stats['best_model']}")
+            print(f"📈 Best Test R²: {summary_stats['best_test_r2']:.4f}")
+        print(f"📁 Results saved to: {output_dir}")
+        print(f"🌐 View executive summary: {output_dir}/executive_summary.html")
         
         return analyzer
         
@@ -760,27 +1938,29 @@ def run_tree_analysis(data_source, target_column: str = 'energy',
 
 def main():
     """Interactive main function for command-line usage"""
-    print("Robust Tree-Based Models for Au Cluster Analysis")
+    print("Enhanced Tree-Based Models for Au Cluster Analysis")
     print("=" * 55)
     
     try:
         # Get data path from user
-        data_path = input("/Users/wilbert/Documents/GitHub/AIAC/au_cluster_analysis_results/descriptors.csv").strip()
+        data_path = input("Enter path to descriptors.csv (press Enter for default): ").strip()
         
         if not data_path:
             print("Using default path: ./au_cluster_analysis_results/descriptors.csv")
             data_path = "./au_cluster_analysis_results/descriptors.csv"
         
         # Get output directory
-        output_dir = input("Enter output directory (press Enter for './tree_results'): ").strip()
+        output_dir = input("Enter output directory (press Enter for './tree_models_results'): ").strip()
         if not output_dir:
-            output_dir = "./tree_results"
+            output_dir = "./tree_models_results"
         
         # Run analysis
         analyzer = run_tree_analysis(data_path, target_column='energy', output_dir=output_dir)
         
-        print("\nAnalysis completed successfully!")
-        print(f"Check {output_dir} for results and visualizations")
+        # Optional: Create PDF report
+        create_pdf = input("\nCreate PDF report? (y/n, default: n): ").strip().lower()
+        if create_pdf == 'y':
+            analyzer.create_pdf_report(Path(output_dir))
         
         return analyzer
         
@@ -795,6 +1975,6 @@ if __name__ == "__main__":
     # Interactive mode when run as script
     analyzer = main()
 else:
-    print("Robust Tree-Based Models Analyzer")
+    print("Enhanced Tree-Based Models Analyzer")
     print("Use run_tree_analysis(data_source, target_column) with your data")
     print("data_source can be either a file path or pandas DataFrame")

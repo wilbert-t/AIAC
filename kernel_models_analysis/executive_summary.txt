@@ -1,0 +1,45 @@
+================================================================================
+KERNEL METHODS ANALYSIS - EXECUTIVE SUMMARY
+================================================================================
+
+Analysis Date: 2025-09-30T02:32:27.784937
+Data Source: ./au_cluster_analysis_results/descriptors.csv
+
+DATA OVERVIEW:
+----------------------------------------
+• Total Samples: 999
+• Features Used: 45
+• Target Range: [-1557.209, -1530.908]
+• Feature/Sample Ratio: 0.045
+
+MODEL PERFORMANCE SUMMARY:
+----------------------------------------
+🏆 BEST MODEL: svr_linear
+   Description: Support Vector Regression with linear kernel
+   Test R²: 0.908
+   Test RMSE: 0.868
+   Status: ✅ GOOD
+
+MODEL STATUS BREAKDOWN:
+   ✅ GOOD: 3 models
+   ⚠️ OVERFITTING: 1 models
+
+DETAILED RESULTS:
+----------------------------------------
+          model_name  test_r2  test_rmse  cv_r2_mean         status
+         elastic_net 0.902699   0.893709    0.627593         ✅ GOOD
+svr_rbf_conservative 0.889918   0.950596    0.788835         ✅ GOOD
+          svr_linear 0.908139   0.868366    0.904551         ✅ GOOD
+          knn_stable 0.840649   1.143708    0.796655 ⚠️ OVERFITTING
+
+RECOMMENDATIONS:
+----------------------------------------
+• Models show good performance
+• Consider the best model for deployment
+• Validate on additional test sets
+
+Generated files for documentation:
+• Performance plots: visualizations/
+• Learning curves: learning_curves/
+• Model predictions: predictions/
+• Trained models: saved_models/

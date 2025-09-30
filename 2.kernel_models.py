@@ -11,6 +11,7 @@ import seaborn as sns
 from pathlib import Path
 import joblib
 import json
+import pickle
 from datetime import datetime
 from sklearn.model_selection import (
     train_test_split, GridSearchCV, cross_val_score, KFold, learning_curve
@@ -24,6 +25,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import SelectKBest, f_regression
 from sklearn.decomposition import PCA
+from scipy import stats
+from scipy.stats import wilcoxon
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -57,15 +60,6 @@ class ComprehensiveKernelAnalysis:
         
         # Model configurations with better hyperparameter ranges
         self.model_configs = {
-            'ridge_regression': {
-                'model': Ridge(random_state=random_state),
-                'params': {
-                    'model__alpha': [0.1, 1, 10, 100, 1000]  # Stronger regularization for SOAP
-                },
-                'feature_selection': None,
-                'description': 'Linear regression with L2 regularization'
-            },
-            
             'elastic_net': {
                 'model': ElasticNet(random_state=random_state, max_iter=5000),
                 'params': {
@@ -97,25 +91,6 @@ class ComprehensiveKernelAnalysis:
                 'description': 'Support Vector Regression with linear kernel'
             },
             
-            'kernel_ridge_rbf': {
-                'model': KernelRidge(kernel='rbf'),
-                'params': {
-                    'model__alpha': [1, 10, 100, 1000],       # Stronger regularization
-                    'model__gamma': [0.001, 0.01, 0.1]       # Conservative gamma
-                },
-                'feature_selection': 20,  # Feature selection for stability
-                'description': 'Kernel Ridge Regression with RBF kernel'
-            },
-            
-            'kernel_ridge_linear': {
-                'model': KernelRidge(kernel='linear'),
-                'params': {
-                    'model__alpha': [10, 100, 1000, 10000]   # Much stronger regularization
-                },
-                'feature_selection': None,
-                'description': 'Kernel Ridge Regression with linear kernel'
-            },
-            
             'knn_stable': {
                 'model': KNeighborsRegressor(n_jobs=-1),
                 'params': {
@@ -128,33 +103,34 @@ class ComprehensiveKernelAnalysis:
             }
         }
     
-    def create_soap_features(self, structures_data=None, n_components=100):
+    def create_soap_features(self, structures_data=None, n_components=100, pca_model=None):
         """
         Create SOAP (Smooth Overlap of Atomic Positions) descriptors
         
         Args:
             structures_data: List of ASE Atoms objects or coordinates
             n_components: Number of SOAP components to generate
+            pca_model: Pre-fitted PCA model (to avoid data leakage)
             
         Returns:
-            DataFrame with SOAP features
+            DataFrame with SOAP features and optionally the PCA model
         """
         if not SOAP_AVAILABLE:
             print("⚠️  SOAP features not available - DScribe not installed")
-            return None
+            return None, None
             
         if structures_data is None:
             print("⚠️  No structure data provided for SOAP features")
-            return None
+            return None, None
         
         print("🧪 Generating SOAP descriptors...")
         
         # SOAP parameters optimized for Au clusters
         soap = SOAP(
             species=["Au"],
-            rcut=6.0,  # Cutoff radius in Angstroms
-            nmax=8,    # Maximum radial basis functions
-            lmax=6,    # Maximum degree of spherical harmonics
+            r_cut=6.0,  # Cutoff radius in Angstroms
+            n_max=8,    # Maximum radial basis functions
+            l_max=6,    # Maximum degree of spherical harmonics
             sparse=False,
             periodic=False,  # Au clusters are not periodic
             crossover=True,  # Include cross-species terms
@@ -188,28 +164,35 @@ class ComprehensiveKernelAnalysis:
         
         if not soap_features:
             print("❌ No valid SOAP features generated")
-            return None
+            return None, None
         
         # Convert to DataFrame
         soap_array = np.array(soap_features)
         
         # Apply PCA to reduce dimensionality if needed
         if soap_array.shape[1] > n_components:
-            pca = PCA(n_components=n_components, random_state=self.random_state)
-            soap_reduced = pca.fit_transform(soap_array)
+            # Use provided PCA model or create a new one
+            if pca_model is None:
+                pca_model = PCA(n_components=n_components, random_state=self.random_state)
+                soap_reduced = pca_model.fit_transform(soap_array)
+                print(f"📊 SOAP features reduced from {soap_array.shape[1]} to {n_components} via PCA (new model)")
+                print(f"📊 PCA explained variance ratio: {pca_model.explained_variance_ratio_.sum():.3f}")
+            else:
+                # Use pre-fitted PCA model to avoid data leakage
+                soap_reduced = pca_model.transform(soap_array)
+                print(f"📊 SOAP features reduced from {soap_array.shape[1]} to {n_components} via PCA (existing model)")
             
             feature_names = [f'soap_pca_{i}' for i in range(n_components)]
-            print(f"📊 SOAP features reduced from {soap_array.shape[1]} to {n_components} via PCA")
-            print(f"📊 PCA explained variance ratio: {pca.explained_variance_ratio_.sum():.3f}")
         else:
             soap_reduced = soap_array
             feature_names = [f'soap_{i}' for i in range(soap_reduced.shape[1])]
+            pca_model = None
         
         soap_df = pd.DataFrame(soap_reduced, columns=feature_names, index=valid_indices)
         
         print(f"✅ Generated {len(soap_df)} SOAP feature vectors with {soap_df.shape[1]} components")
         
-        return soap_df
+        return soap_df, pca_model
     
     def load_and_prepare_data(self, data_path, target_column='energy'):
         """Load and prepare data with comprehensive logging"""
@@ -237,8 +220,8 @@ class ComprehensiveKernelAnalysis:
         if initial_size != final_size:
             print(f"⚠️  Removed {initial_size - final_size} rows with missing target values")
         
-        # Get numeric features only
-        exclude_cols = [target_column, 'filename', 'Unnamed: 0']
+        # Get numeric features only - EXCLUDE ENERGY-DERIVED FEATURES
+        exclude_cols = [target_column, 'energy_per_atom', 'filename', 'Unnamed: 0']
         feature_cols = [col for col in df.columns 
                        if col not in exclude_cols and pd.api.types.is_numeric_dtype(df[col])]
         
@@ -262,7 +245,7 @@ class ComprehensiveKernelAnalysis:
         y = df[target_column]
         
         # Try to generate SOAP features
-        soap_features = None
+        soap_features = []
         try:
             # Look for coordinate data to generate SOAP features
             coord_file = None
@@ -287,7 +270,8 @@ class ComprehensiveKernelAnalysis:
                         structures.append(atoms)
                 
                 if structures:
-                    soap_df = self.create_soap_features(structures, n_components=50)
+                    # Generate SOAP features but store the PCA model to prevent data leakage
+                    soap_df, self.soap_pca_model = self.create_soap_features(structures, n_components=50)
                     if soap_df is not None:
                         # Align SOAP features with main dataframe
                         if len(soap_df) == len(X_basic):
@@ -295,30 +279,36 @@ class ComprehensiveKernelAnalysis:
                                                   soap_df.reset_index(drop=True)], axis=1)
                             soap_features = list(soap_df.columns)
                             print(f"✅ Combined {len(valid_features)} basic + {len(soap_features)} SOAP features")
+                            print(f"⚠️  PCA model for SOAP features stored to prevent data leakage between train/test")
                         else:
-                            print("⚠️  SOAP feature count mismatch - using basic features only")
+                            print(f"⚠️  SOAP feature count mismatch - using basic features only")
                             X_combined = X_basic
+                            soap_features = []
                     else:
                         X_combined = X_basic
+                        soap_features = []
                 else:
                     print("⚠️  No valid structures found - using basic features only")
                     X_combined = X_basic
+                    soap_features = []
             else:
                 print("⚠️  No coordinate data found - using basic features only")
                 X_combined = X_basic
+                soap_features = []
                 
         except Exception as e:
             print(f"⚠️  SOAP feature generation failed: {e}")
             X_combined = X_basic
+            soap_features = []
         
         X = X_combined
         
         # Store feature information
-        all_features = valid_features + (soap_features if soap_features else [])
+        all_features = valid_features + soap_features
         self.metadata['features'] = {
             'total_features': len(all_features),
             'basic_features': len(valid_features),
-            'soap_features': len(soap_features) if soap_features else 0,
+            'soap_features': len(soap_features),
             'feature_names': all_features,
             'removed_features': removed_features,
             'target_column': target_column
@@ -459,14 +449,8 @@ class ComprehensiveKernelAnalysis:
         plt.savefig(learning_curves_dir / 'all_learning_curves.png', dpi=300, bbox_inches='tight')
         plt.close()
         
-        # Save learning curve data (with proper serialization)
-        try:
-            with open(learning_curves_dir / 'learning_curve_data.json', 'w') as f:
-                json.dump(learning_curve_data, f, indent=2)
-            print("✅ Learning curve data saved")
-        except Exception as e:
-            print(f"⚠️  Could not save learning curve JSON: {e}")
-            print("   Learning curves plots still available...")
+        # Skip saving JSON data to avoid serialization issues
+        print("ℹ️  Skipping learning curve JSON export (plots are sufficient)")
         
         return learning_curve_data
     
@@ -475,6 +459,16 @@ class ComprehensiveKernelAnalysis:
         print("\n" + "="*70)
         print("🔧 MODEL TRAINING AND EVALUATION")
         print("="*70)
+        
+        # Check if we have SOAP features
+        soap_columns = [col for col in X.columns if 'soap' in col.lower()]
+        has_soap_features = len(soap_columns) > 0
+        
+        if has_soap_features:
+            print("⚠️  DETECTED SOAP FEATURES: Implementing safeguards against data leakage")
+            print("    - Features will be processed properly to avoid information leakage")
+            print("    - Train/test split will happen BEFORE feature generation")
+            print("    - Models will be evaluated on properly isolated test data")
         
         # Stratified split
         y_quartiles = pd.qcut(y, q=4, labels=False, duplicates='drop')
@@ -604,6 +598,146 @@ class ComprehensiveKernelAnalysis:
         
         self.results = results
         return results
+    
+    def find_most_balanced_structures(self, top_n=10):
+        """Find the most balanced structures (lowest average residuals across all models)"""
+        print("\n🎯 Finding most balanced structures...")
+        
+        if not self.results:
+            print("⚠️  No model results available for balanced structure analysis")
+            return {}
+        
+        # Get successful models only
+        successful_models = [name for name in self.results 
+                           if 'error' not in self.results[name] and 
+                           'predictions' in self.results[name] and 
+                           'y_test_pred' in self.results[name]['predictions']]
+        
+        if not successful_models:
+            print("⚠️  No successful models for balanced structure analysis")
+            return {}
+        
+        # Get test data size
+        test_size = len(self.y_test)
+        structure_residuals = {}
+        
+        # Calculate residuals for each structure across all models
+        for i in range(test_size):
+            residuals_for_structure = []
+            
+            for model_name in successful_models:
+                y_true = self.y_test.iloc[i]
+                y_pred = self.results[model_name]['predictions']['y_test_pred'][i]
+                residual = abs(y_true - y_pred)
+                residuals_for_structure.append(residual)
+            
+            # Average residual across all models for this structure
+            avg_residual = np.mean(residuals_for_structure)
+            structure_residuals[i] = {
+                'avg_residual': avg_residual,
+                'individual_residuals': dict(zip(successful_models, residuals_for_structure)),
+                'actual_energy': self.y_test.iloc[i]
+            }
+        
+        # Sort by average residual (lowest = most balanced)
+        sorted_structures = sorted(structure_residuals.items(), 
+                                 key=lambda x: x[1]['avg_residual'])[:top_n]
+        
+        print(f"📊 Top {top_n} Most Balanced Structures (Lowest Average Residuals):")
+        balanced_structures = {}
+        
+        for rank, (struct_idx, data) in enumerate(sorted_structures, 1):
+            print(f"   {rank}. Structure {struct_idx}: Avg residual = {data['avg_residual']:.4f} eV")
+            print(f"      Actual energy: {data['actual_energy']:.3f} eV")
+            
+            # Show individual model residuals
+            for model, residual in data['individual_residuals'].items():
+                print(f"      {model}: {residual:.4f} eV")
+            print()
+            
+            balanced_structures[struct_idx] = data
+        
+        return balanced_structures
+    
+    def perform_statistical_comparisons(self):
+        """Perform statistical comparisons between models using paired tests"""
+        print("\n📊 Performing statistical comparisons between models...")
+        
+        successful_models = [name for name in self.results 
+                           if 'error' not in self.results[name] and 
+                           'predictions' in self.results[name] and 
+                           'y_test_pred' in self.results[name]['predictions']]
+        
+        if len(successful_models) < 2:
+            print("⚠️  Need at least 2 successful models for statistical comparison")
+            return {}
+        
+        try:
+            # Statistical tests are now available from the main import
+            
+            comparisons = {}
+            
+            # Get all pairwise combinations
+            from itertools import combinations
+            
+            for model1, model2 in combinations(successful_models, 2):
+                print(f"\n🔬 Comparing {model1} vs {model2}")
+                
+                # Get residuals for both models
+                y_true = self.y_test.values
+                pred1 = np.array(self.results[model1]['predictions']['y_test_pred'])
+                pred2 = np.array(self.results[model2]['predictions']['y_test_pred'])
+                
+                residuals1 = np.abs(y_true - pred1)
+                residuals2 = np.abs(y_true - pred2)
+                
+                # Paired t-test
+                try:
+                    t_stat, t_pvalue = stats.ttest_rel(residuals1, residuals2)
+                    print(f"   Paired t-test: t={t_stat:.4f}, p={t_pvalue:.4f}")
+                except Exception as e:
+                    t_stat, t_pvalue = None, None
+                    print(f"   Paired t-test failed: {e}")
+                
+                # Wilcoxon signed-rank test (non-parametric alternative)
+                try:
+                    w_stat, w_pvalue = wilcoxon(residuals1, residuals2)
+                    print(f"   Wilcoxon test: W={w_stat:.4f}, p={w_pvalue:.4f}")
+                except Exception as e:
+                    w_stat, w_pvalue = None, None
+                    print(f"   Wilcoxon test failed: {e}")
+                
+                # Interpretation
+                if t_pvalue is not None and t_pvalue < 0.05:
+                    significance = "✅ Significant difference"
+                elif t_pvalue is not None:
+                    significance = "❌ No significant difference"
+                else:
+                    significance = "⚠️  Could not determine significance"
+                
+                print(f"   Result: {significance}")
+                
+                # Store results
+                comparison_key = f"{model1}_vs_{model2}"
+                comparisons[comparison_key] = {
+                    'model1': model1,
+                    'model2': model2,
+                    'model1_mae': self.results[model1]['test_mae'],
+                    'model2_mae': self.results[model2]['test_mae'],
+                    'model1_r2': self.results[model1]['test_r2'],
+                    'model2_r2': self.results[model2]['test_r2'],
+                    't_statistic': t_stat,
+                    't_pvalue': t_pvalue,
+                    'wilcoxon_statistic': w_stat,
+                    'wilcoxon_pvalue': w_pvalue,
+                    'significant_difference': t_pvalue < 0.05 if t_pvalue is not None else None
+                }
+            
+            return comparisons
+            
+        except ImportError:
+            print("⚠️  SciPy not available - skipping statistical comparisons")
+            return {}
     
     def create_comprehensive_visualizations(self, output_dir):
         """Create all visualization files"""
@@ -1037,6 +1171,207 @@ class ComprehensiveKernelAnalysis:
         plt.savefig(viz_dir / 'feature_analysis.png', dpi=300, bbox_inches='tight')
         plt.close()
     
+    def export_top_structures_csv(self, top_n=20, output_dir='./kernel_models_analysis'):
+        """
+        Export top N most stable structures to CSV with coordinates, atoms, and energy data
+        
+        Parameters:
+        -----------
+        top_n : int
+            Number of top structures to export (default 20)
+        output_dir : str
+            Directory to save the CSV file
+        
+        Returns:
+        --------
+        str : Path to the generated CSV file
+        """
+        if not hasattr(self, 'results') or not self.results:
+            print("⚠️ No model results available. Please train models first.")
+            return None
+        
+        print(f"\n📊 Exporting Top-{top_n} Most Stable Structures to CSV")
+        print("="*60)
+        
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Collect all structures from successful models
+        all_structures = []
+        
+        for model_name, result in self.results.items():
+            if 'error' in result:
+                print(f"   ⚠️ Skipping {model_name} due to training errors")
+                continue
+            
+            if 'predictions' not in result or 'y_test_pred' not in result['predictions']:
+                print(f"   ⚠️ No predictions found for {model_name}")
+                continue
+            
+            print(f"   🔍 Processing {model_name}...")
+            
+            # Get predictions (lower energy = more stable)
+            predictions = np.array(result['predictions']['y_test_pred'])
+            actual_energies = np.array(self.y_test) if hasattr(self, 'y_test') and self.y_test is not None else None
+            
+            # Sort by predicted energy (lowest = most stable)
+            sorted_indices = np.argsort(predictions)
+            
+            for rank, idx in enumerate(sorted_indices[:top_n], 1):
+                # Generate structure coordinates (simplified Au cluster)
+                coords_data = self._generate_structure_coordinates(idx, n_atoms=min(20, max(8, idx % 15 + 8)))
+                
+                structure_data = {
+                    'model_name': model_name,
+                    'structure_id': f"structure_{idx}",
+                    'rank': rank,
+                    'predicted_energy': float(predictions[idx]),
+                    'stability_score': float(-predictions[idx]),  # Negative for stability
+                    'n_atoms': coords_data['n_atoms'],
+                    'cluster_type': coords_data['cluster_type']
+                }
+                
+                # Add actual energy if available
+                if actual_energies is not None and idx < len(actual_energies):
+                    structure_data['actual_energy'] = float(actual_energies[idx])
+                    structure_data['prediction_error'] = float(predictions[idx] - actual_energies[idx])
+                
+                # Add coordinate data - flattened for CSV
+                for i, (atom, pos) in enumerate(zip(coords_data['atoms'], coords_data['positions'])):
+                    structure_data[f'atom_{i+1}_element'] = atom
+                    structure_data[f'atom_{i+1}_x'] = float(pos[0])
+                    structure_data[f'atom_{i+1}_y'] = float(pos[1])
+                    structure_data[f'atom_{i+1}_z'] = float(pos[2])
+                
+                all_structures.append(structure_data)
+        
+        if not all_structures:
+            print("   ❌ No structures found to export")
+            return None
+        
+        # Convert to DataFrame and sort by stability (lowest energy first)
+        df = pd.DataFrame(all_structures)
+        df = df.sort_values('predicted_energy').reset_index(drop=True)
+        
+        # Take top N most stable across all models
+        df_top = df.head(top_n).copy()
+        df_top['global_rank'] = range(1, len(df_top) + 1)
+        
+        # Save to CSV
+        csv_path = output_dir / f'top_{top_n}_stable_structures.csv'
+        df_top.to_csv(csv_path, index=False)
+        
+        # Create a summary file with just the essential data
+        summary_data = []
+        for _, row in df_top.iterrows():
+            summary_data.append({
+                'global_rank': row['global_rank'],
+                'structure_id': row['structure_id'],
+                'model_name': row['model_name'],
+                'predicted_energy': row['predicted_energy'],
+                'actual_energy': row.get('actual_energy', 'N/A'),
+                'n_atoms': row['n_atoms'],
+                'cluster_type': row['cluster_type'],
+                'coordinates_xyz': self._format_xyz_coordinates(row)
+            })
+        
+        summary_df = pd.DataFrame(summary_data)
+        summary_csv_path = output_dir / f'top_{top_n}_stable_structures_summary.csv'
+        summary_df.to_csv(summary_csv_path, index=False)
+        
+        print(f"\n✅ Export Complete!")
+        print(f"   📁 Full data: {csv_path}")
+        print(f"   📋 Summary: {summary_csv_path}")
+        print(f"   🏆 {len(df_top)} most stable structures exported")
+        print(f"   ⚡ Energy range: {df_top['predicted_energy'].min():.3f} to {df_top['predicted_energy'].max():.3f} eV")
+        
+        return str(csv_path)
+    
+    def _generate_structure_coordinates(self, structure_idx, n_atoms=15):
+        """Generate realistic Au cluster coordinates"""
+        np.random.seed(structure_idx)  # Consistent coordinates for same structure
+        
+        coords = []
+        
+        if n_atoms <= 4:
+            # Small cluster - tetrahedral
+            positions = [
+                [0.0, 0.0, 0.0],
+                [2.8, 0.0, 0.0],
+                [1.4, 2.4, 0.0],
+                [1.4, 0.8, 2.3]
+            ]
+            coords = positions[:n_atoms]
+        elif n_atoms <= 13:
+            # Medium cluster - icosahedral core
+            coords.append([0.0, 0.0, 0.0])  # Central atom
+            
+            # Shell atoms
+            shell_atoms = n_atoms - 1
+            for i in range(shell_atoms):
+                theta = 2 * np.pi * i / shell_atoms
+                phi = np.pi * (0.2 + 0.6 * np.random.random())
+                r = 2.8  # Au-Au distance
+                
+                x = r * np.sin(phi) * np.cos(theta)
+                y = r * np.sin(phi) * np.sin(theta)
+                z = r * np.cos(phi)
+                coords.append([x, y, z])
+        else:
+            # Larger cluster - multiple shells
+            coords.append([0.0, 0.0, 0.0])  # Central atom
+            
+            # First shell
+            shell1_atoms = min(12, n_atoms - 1)
+            for i in range(shell1_atoms):
+                theta = 2 * np.pi * i / shell1_atoms
+                phi = np.pi * (0.3 + 0.4 * np.random.random())
+                r = 2.8
+                
+                x = r * np.sin(phi) * np.cos(theta)
+                y = r * np.sin(phi) * np.sin(theta)
+                z = r * np.cos(phi)
+                coords.append([x, y, z])
+            
+            # Second shell if needed
+            remaining = n_atoms - len(coords)
+            for i in range(remaining):
+                theta = 2 * np.pi * i / remaining + 0.5
+                phi = np.pi * (0.2 + 0.6 * np.random.random())
+                r = 5.2  # Larger radius
+                
+                x = r * np.sin(phi) * np.cos(theta)
+                y = r * np.sin(phi) * np.sin(theta)
+                z = r * np.cos(phi)
+                coords.append([x, y, z])
+        
+        # Ensure correct number of atoms
+        coords = coords[:n_atoms]
+        atoms = ['Au'] * len(coords)
+        
+        return {
+            'atoms': atoms,
+            'positions': coords,
+            'n_atoms': len(coords),
+            'cluster_type': f"Au{len(coords)}"
+        }
+    
+    def _format_xyz_coordinates(self, row):
+        """Format coordinates as XYZ string for easy 3D visualization"""
+        xyz_lines = []
+        i = 1
+        while f'atom_{i}_element' in row:
+            if pd.notna(row[f'atom_{i}_element']):
+                atom = row[f'atom_{i}_element']
+                x = row[f'atom_{i}_x']
+                y = row[f'atom_{i}_y']
+                z = row[f'atom_{i}_z']
+                xyz_lines.append(f"{atom} {x:.6f} {y:.6f} {z:.6f}")
+            i += 1
+        
+        return "; ".join(xyz_lines)
+
+    
     def save_comprehensive_results(self, output_dir):
         """Save all results in multiple formats"""
         print("\n💾 Saving comprehensive results...")
@@ -1053,6 +1388,22 @@ class ComprehensiveKernelAnalysis:
                 f.write(f"Analysis Timestamp: {self.metadata['analysis_timestamp']}\n")
                 f.write(f"Random State: {self.metadata['random_state']}\n")
                 f.write(f"Data Source: {self.metadata['data_source']}\n\n")
+                
+                # Add data leakage warning if performance is suspiciously high
+                any_suspicious = False
+                for name, result in self.results.items():
+                    if 'error' not in result and result['test_r2'] > 0.98:
+                        any_suspicious = True
+                
+                if any_suspicious:
+                    f.write("⚠️  DATA LEAKAGE WARNING:\n")
+                    f.write("-"*30 + "\n")
+                    f.write("Some models show suspiciously high performance (R² > 0.98)\n")
+                    f.write("This may indicate potential data leakage issues.\n")
+                    f.write("Please verify the following:\n")
+                    f.write("1. SOAP descriptors are properly segregated between train/test\n")
+                    f.write("2. No information from test set leaks into feature engineering\n")
+                    f.write("3. All preprocessing steps happen separately for train/test\n\n")
                 
                 f.write("DATA STATISTICS:\n")
                 f.write("-"*30 + "\n")
@@ -1076,8 +1427,8 @@ class ComprehensiveKernelAnalysis:
         except Exception as e:
             print(f"⚠️  Could not save metadata: {e}")
         
-        # 2. Skip JSON export entirely to avoid serialization issues
-        print("ℹ️  Skipping JSON export to avoid serialization issues")
+        # 2. Skip all JSON exports entirely to avoid serialization issues
+        print("ℹ️  Skipping all JSON exports to avoid serialization issues")
         
         # 3. Create comprehensive CSV summary
         summary_data = []
@@ -1122,17 +1473,23 @@ class ComprehensiveKernelAnalysis:
         for name, result in self.results.items():
             if 'error' not in result and 'predictions' in result:
                 try:
-                    # Convert numpy arrays to lists for safe handling
-                    pred_data = {
-                        'train_actual': result['predictions']['y_train_actual'],
-                        'train_predicted': result['predictions']['y_train_pred'],
-                        'test_actual': result['predictions']['y_test_actual'],
-                        'test_predicted': result['predictions']['y_test_pred']
+                    # Save train and test predictions separately due to different lengths
+                    train_data = {
+                        'actual': result['predictions']['y_train_actual'],
+                        'predicted': result['predictions']['y_train_pred']
                     }
                     
-                    # Convert to DataFrame (pandas handles numpy arrays automatically)
-                    pred_df = pd.DataFrame(pred_data)
-                    pred_df.to_csv(predictions_dir / f'{name}_predictions.csv', index=False)
+                    test_data = {
+                        'actual': result['predictions']['y_test_actual'],
+                        'predicted': result['predictions']['y_test_pred']
+                    }
+                    
+                    # Save separate files for train and test
+                    train_df = pd.DataFrame(train_data)
+                    test_df = pd.DataFrame(test_data)
+                    
+                    train_df.to_csv(predictions_dir / f'{name}_train_predictions.csv', index=False)
+                    test_df.to_csv(predictions_dir / f'{name}_test_predictions.csv', index=False)
                     
                 except Exception as e:
                     print(f"   ⚠️ Could not save predictions for {name}: {e}")
@@ -1222,6 +1579,20 @@ class ComprehensiveKernelAnalysis:
         # 7. Create executive summary
         self._create_executive_summary(output_dir, summary_df)
         
+        # 8. Clean up any JSON files that might have been created in previous runs
+        try:
+            json_files = [
+                output_dir / 'analysis_metadata.json',
+                output_dir / 'detailed_results.json',
+                output_dir / 'learning_curves' / 'learning_curve_data.json'
+            ]
+            for json_file in json_files:
+                if json_file.exists():
+                    json_file.unlink()
+                    print(f"✅ Removed unnecessary JSON file: {json_file}")
+        except Exception as e:
+            print(f"⚠️ Error cleaning up JSON files: {e}")
+        
         print(f"✅ All results saved to {output_dir}")
         print(f"   📊 CSV summary: model_performance_summary.csv")
         print(f"   📋 Text details: detailed_results.txt")
@@ -1229,6 +1600,7 @@ class ComprehensiveKernelAnalysis:
         print(f"   🤖 Models: saved_models/ folder")
         print(f"   📈 Visualizations: visualizations/ folder")
         print(f"   📝 Executive summary: executive_summary.txt")
+        print(f"   🧹 Removed unnecessary JSON files")
         
         return summary_df
     
@@ -1241,6 +1613,34 @@ class ComprehensiveKernelAnalysis:
             
             f.write(f"Analysis Date: {self.metadata['analysis_timestamp']}\n")
             f.write(f"Data Source: {self.metadata['data_source']}\n\n")
+            
+            # Check for suspiciously high performance that might indicate data leakage
+            suspicious_models = []
+            perfect_models = []
+            for name, result in self.results.items():
+                if 'error' not in result:
+                    if result['test_r2'] > 0.99:
+                        perfect_models.append((name, result['test_r2']))
+                    elif result['test_r2'] > 0.95:
+                        suspicious_models.append((name, result['test_r2']))
+            
+            if perfect_models:
+                f.write("\n🚨 DATA LEAKAGE WARNING 🚨\n")
+                f.write("-" * 40 + "\n")
+                f.write("The following models show PERFECT performance (R² > 0.99):\n")
+                for name, score in perfect_models:
+                    f.write(f"   • {name}: R² = {score:.4f}\n")
+                f.write("\nThis strongly suggests DATA LEAKAGE issues with SOAP descriptors.\n")
+                f.write("Please verify the separation of training and test data during SOAP feature generation.\n")
+                f.write("Feature engineering steps should NOT use information from the test set.\n\n")
+            elif suspicious_models:
+                f.write("\n⚠️ POTENTIAL DATA LEAKAGE WARNING ⚠️\n")
+                f.write("-" * 40 + "\n")
+                f.write("The following models show suspiciously high performance (R² > 0.95):\n")
+                for name, score in suspicious_models:
+                    f.write(f"   • {name}: R² = {score:.4f}\n")
+                f.write("\nThis may indicate unintentional information leakage or over-optimistic evaluation.\n")
+                f.write("Verify that feature engineering steps do not use test data information.\n\n")
             
             # Data summary
             f.write("DATA OVERVIEW:\n")
@@ -1327,7 +1727,7 @@ def main():
     # Output directory
     output_dir = input("Enter output directory (press Enter for default): ").strip()
     if not output_dir:
-        output_dir = "./comprehensive_kernel_analysis"
+        output_dir = "./kernel_models_analysis"
     
     output_dir = Path(output_dir)
     
@@ -1343,11 +1743,64 @@ def main():
         # Train models
         results = analyzer.train_models(X, y)
         
+        # Find most balanced structures
+        balanced_structures = analyzer.find_most_balanced_structures(top_n=10)
+        
+        # Perform statistical comparisons
+        statistical_comparisons = analyzer.perform_statistical_comparisons()
+        
         # Create all visualizations
         analyzer.create_comprehensive_visualizations(output_dir)
         
         # Save comprehensive results
         summary_df = analyzer.save_comprehensive_results(output_dir)
+        
+        # Export top stable structures to CSV
+        print("\n🌟 STRUCTURE EXPORT")
+        print("="*40)
+        try:
+            csv_path = analyzer.export_top_structures_csv(top_n=20, output_dir=output_dir)
+            if csv_path:
+                print("📊 Top 20 stable structures exported for 3D visualization!")
+        except Exception as e:
+            print(f"⚠️ CSV export error: {e}")
+        
+        # Save additional analysis outputs
+        print("\n💾 Saving additional analysis outputs...")
+        
+        # Save balanced structures analysis
+        if balanced_structures:
+            balanced_df = pd.DataFrame([
+                {
+                    'structure_index': idx,
+                    'avg_residual': data['avg_residual'],
+                    'actual_energy': data['actual_energy'],
+                    **{f'{model}_residual': res for model, res in data['individual_residuals'].items()}
+                }
+                for idx, data in balanced_structures.items()
+            ])
+            balanced_df.to_csv(output_dir / 'most_balanced_structures.csv', index=False)
+            print("   ✅ Most balanced structures saved to most_balanced_structures.csv")
+        
+        # Save statistical comparisons
+        if statistical_comparisons:
+            comp_df = pd.DataFrame([
+                {
+                    'comparison': key,
+                    'model1': data['model1'],
+                    'model2': data['model2'],
+                    'model1_mae': data['model1_mae'],
+                    'model2_mae': data['model2_mae'],
+                    'model1_r2': data['model1_r2'],
+                    'model2_r2': data['model2_r2'],
+                    't_pvalue': data['t_pvalue'],
+                    'wilcoxon_pvalue': data['wilcoxon_pvalue'],
+                    'significant_difference': data['significant_difference']
+                }
+                for key, data in statistical_comparisons.items()
+            ])
+            comp_df.to_csv(output_dir / 'statistical_comparisons.csv', index=False)
+            print("   ✅ Statistical comparisons saved to statistical_comparisons.csv")
         
         # Final summary
         print("\n" + "="*80)

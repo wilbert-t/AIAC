@@ -1,9 +1,0 @@
-{
-  "ridge_regression": {
-    "description": "Linear regression with L2 regularization",
-    "best_params": {
-      "model__alpha": 0.01
-    },
-    "grid_search_results": {
-      "cv_results": {
-        "mean_fit_time": 
