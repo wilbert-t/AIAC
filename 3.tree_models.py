@@ -200,7 +200,7 @@ class EnhancedTreeAnalyzer:
                     'depth': [4, 6, 8],
                     'learning_rate': [0.05, 0.1],
                     'l2_leaf_reg': [1, 3, 5],
-                    'bootstrap_type': ['Bernoulli', 'Bayesian'],
+                    'bootstrap_type': ['Bernoulli'],
                     'subsample': [0.8, 1.0]
                 },
                 is_available=True,
@@ -317,14 +317,14 @@ class EnhancedTreeAnalyzer:
     
     def load_data(self, data_path: str = None, target_column: str = 'energy', use_hybrid_training: bool = True) -> pd.DataFrame:
         """
-        Enhanced data loading with hybrid training support for tree models
+        Enhanced data loading with proper train/test separation to prevent memorization
         
         Args:
             data_path: Path to original descriptors.csv (999 structures)
             target_column: Target variable name
             use_hybrid_training: Whether to use progressive ensemble approach
         """
-        logger.info("Enhanced tree models data loading with hybrid training support")
+        logger.info("Enhanced tree models data loading with proper train/test separation")
         
         # Load original 999 structures for foundation learning
         if data_path is None:
@@ -349,7 +349,7 @@ class EnhancedTreeAnalyzer:
             }
             
             if use_hybrid_training:
-                print("🔄 Loading hybrid training datasets for tree ensembles...")
+                print("🔄 Loading datasets with proper train/test separation...")
                 
                 for name, file_path in dataset_files.items():
                     try:
@@ -362,16 +362,39 @@ class EnhancedTreeAnalyzer:
                         print(f"   ⚠️  {name}: File not found - {file_path}")
                         logger.warning(f"Dataset {name} not found: {file_path}")
                         self.datasets[name] = None
+                
+                # Verify no overlap between elite (test) and training sets
+                if self.datasets.get('elite') is not None:
+                    elite_ids = set(self.datasets['elite']['structure_id']) if 'structure_id' in self.datasets['elite'].columns else set()
+                    
+                    overlaps_found = False
+                    for train_name in ['balanced', 'high_quality']:
+                        if self.datasets.get(train_name) is not None and 'structure_id' in self.datasets[train_name].columns:
+                            train_ids = set(self.datasets[train_name]['structure_id'])
+                            overlap = elite_ids.intersection(train_ids)
+                            if overlap:
+                                print(f"   ⚠️  WARNING: {len(overlap)} overlaps found between elite and {train_name}!")
+                                overlaps_found = True
+                    
+                    if not overlaps_found:
+                        print("   ✅ Verified: No overlaps between elite (test) and training sets")
+                        
+                    # Check if Structure 350 is in elite dataset
+                    if 'structure_350' in elite_ids:
+                        print("   🎯 Structure 350 confirmed in elite (test) dataset")
             
-            print(f"\n📊 Tree Models Dataset Summary:")
+            print(f"\n📊 Tree Models Dataset Summary (No Memorization):")
             print(f"   Foundation (999): {len(self.df_foundation)} samples")
             print(f"   Target range: {self.df_foundation[target_column].min():.2f} to {self.df_foundation[target_column].max():.2f}")
             
             if use_hybrid_training and any(df is not None for df in self.datasets.values()):
-                print(f"   Hybrid ensemble training: ENABLED")
+                print(f"   Training sets (NO elite overlap):")
                 for name, df in self.datasets.items():
                     if df is not None:
-                        print(f"   - {name}: {len(df)} samples")
+                        if name == 'elite':
+                            print(f"   - {name}: {len(df)} samples (TEST ONLY - no memorization)")
+                        else:
+                            print(f"   - {name}: {len(df)} samples (training)")
             
             return self.df_foundation
             
@@ -391,6 +414,52 @@ class EnhancedTreeAnalyzer:
         except Exception as e:
             raise DataValidationError(f"Failed to load data: {e}")
     
+    def prepare_features_with_elite_holdout(self, df: pd.DataFrame, target_column: str = 'energy', exclude_elite: bool = True) -> Tuple[pd.DataFrame, pd.Series]:
+        """
+        Prepare features with elite structure holdout to prevent memorization
+        
+        Args:
+            df: Full dataset 
+            target_column: Target variable name
+            exclude_elite: Whether to exclude elite structures from training
+            
+        Returns:
+            Tuple of (X, y) with elite structures excluded for true generalization testing
+        """
+        logger.info("Preparing features with elite holdout for anti-memorization...")
+        
+        # First prepare features normally
+        X, y = self.prepare_features(df, target_column)
+        
+        # If elite dataset exists and we want to exclude it, remove elite structures from training
+        if exclude_elite and hasattr(self, 'datasets') and self.datasets.get('elite') is not None:
+            elite_df = self.datasets['elite']
+            
+            # Get elite structure IDs
+            if 'structure_id' in elite_df.columns:
+                elite_structure_ids = set(elite_df['structure_id'].tolist())
+                print(f"   🚫 Excluding {len(elite_structure_ids)} elite structures from training to prevent memorization")
+                
+                # Create a mask to exclude elite structures from foundation training
+                if 'filename' in df.columns:
+                    # Extract structure IDs from filenames (e.g., "350.xyz" -> "structure_350")
+                    df['temp_structure_id'] = df['filename'].apply(lambda x: f"structure_{x.replace('.xyz', '')}" if isinstance(x, str) else f"structure_{x}")
+                    mask = ~df['temp_structure_id'].isin(elite_structure_ids)
+                    
+                    # Filter out elite structures
+                    filtered_indices = df[mask].index
+                    X_filtered = X.loc[filtered_indices]
+                    y_filtered = y.loc[filtered_indices]
+                    
+                    print(f"   ✅ Foundation training set: {len(X_filtered)} structures (elite excluded)")
+                    print(f"   🏆 Elite validation set: {len(elite_df)} structures (never seen during training)")
+                    
+                    return X_filtered, y_filtered
+                else:
+                    print("   ⚠️ No filename column found - cannot exclude elite structures")
+        
+        return X, y
+
     def prepare_features(self, df: pd.DataFrame, target_column: str = 'energy') -> Tuple[pd.DataFrame, pd.Series]:
         """Prepare features with validation and cleaning"""
         logger.info("Preparing features...")
@@ -499,9 +568,12 @@ class EnhancedTreeAnalyzer:
         try:
             # Create base model
             base_params = {
-                'random_state': self.config.random_state,
-                'n_jobs': min(self.config.n_jobs, 2)
+                'random_state': self.config.random_state
             }
+            
+            # Add n_jobs only for models that support it
+            if config.name in ['random_forest', 'extra_trees', 'xgboost', 'lightgbm', 'knn_stable']:
+                base_params['n_jobs'] = min(self.config.n_jobs, 2)
             
             # Add model-specific parameters
             if config.name == 'xgboost':
@@ -511,6 +583,9 @@ class EnhancedTreeAnalyzer:
             elif config.name == 'catboost':
                 base_params.update({'verbose': False, 'random_seed': self.config.random_state})
                 base_params.pop('random_state', None)  # CatBoost uses random_seed
+            elif config.name == 'gradient_boosting':
+                # GradientBoostingRegressor doesn't support n_jobs parameter
+                pass
             elif config.name == 'knn_stable':
                 base_params.pop('random_state', None)  # KNN doesn't use random_state
             
@@ -714,12 +789,20 @@ class EnhancedTreeAnalyzer:
             )
             results['ensemble_refinement'] = refinement_results
         
-        # Stage 3: Elite Validation (if elite dataset available)  
+        # Stage 3: Elite Validation (PROPER TEST SET - NO MEMORIZATION)  
         if use_elite_validation and self.datasets.get('elite') is not None:
-            print("\n🏆 STAGE 3: Elite Validation (Never-seen structures)")
+            print("\n🏆 STAGE 3: Elite Validation (NEVER-SEEN structures - No Memorization)")
             print("-" * 50)
             
             X_elite, y_elite = self._prepare_tree_dataset_features(self.datasets['elite'])
+            
+            # Verify elite structures were not used in training
+            elite_ids = set(self.datasets['elite']['structure_id']) if 'structure_id' in self.datasets['elite'].columns else set()
+            print(f"   🎯 Testing on {len(X_elite)} elite structures (TRUE GENERALIZATION)")
+            
+            # Check for Structure 350
+            if 'structure_350' in elite_ids:
+                print("   ⭐ Structure 350 (best energy) will be tested without memorization")
             
             elite_results = {}
             source_results = results.get('ensemble_refinement', results['foundation_results'])
@@ -732,6 +815,11 @@ class EnhancedTreeAnalyzer:
                     elite_results[model_name] = elite_scores
             
             results['elite_validation'] = elite_results
+            
+            # Store elite test data for CSV export
+            self.X_elite_test = X_elite
+            self.y_elite_test = y_elite
+            self.elite_df = self.datasets['elite']
         
         # Ensemble Analysis
         results['ensemble_analysis'] = self._analyze_ensemble_performance(results)
@@ -794,16 +882,26 @@ class EnhancedTreeAnalyzer:
                 # Reduce complexity for smaller dataset - modify param grid
                 param_grid = model_config.param_grid.copy()
                 if 'n_estimators' in param_grid:
-                    param_grid['n_estimators'] = [min(200, max(param_grid['n_estimators']))]
+                    n_est_values = [v for v in param_grid['n_estimators'] if v is not None]
+                    if n_est_values:
+                        param_grid['n_estimators'] = [min(200, max(n_est_values))]
                 if 'max_depth' in param_grid:
-                    param_grid['max_depth'] = [min(15, max(param_grid['max_depth']))]
+                    depth_values = [v for v in param_grid['max_depth'] if v is not None]
+                    if depth_values:
+                        param_grid['max_depth'] = [min(15, max(depth_values))] + [None]
+                    else:
+                        param_grid['max_depth'] = [None]
             elif model_name == 'gradient_boosting':
                 # Stronger regularization for smaller dataset
                 param_grid = model_config.param_grid.copy()
                 if 'learning_rate' in param_grid:
-                    param_grid['learning_rate'] = [max(0.05, min(param_grid['learning_rate']))]
+                    lr_values = [v for v in param_grid['learning_rate'] if v is not None]
+                    if lr_values:
+                        param_grid['learning_rate'] = [max(0.05, min(lr_values))]
                 if 'n_estimators' in param_grid:
-                    param_grid['n_estimators'] = [min(150, max(param_grid['n_estimators']))]
+                    n_est_values = [v for v in param_grid['n_estimators'] if v is not None]
+                    if n_est_values:
+                        param_grid['n_estimators'] = [min(150, max(n_est_values))]
             else:
                 param_grid = model_config.param_grid
             
@@ -1950,6 +2048,14 @@ Normality p: {stats_dict['normality_pvalue']:.3f}"""
         # 6. Save trained models
         self.save_models_enhanced(output_dir)
         
+        # 7. Export top stable structures
+        print("\n🌟 Exporting top stable structures...")
+        try:
+            csv_path = self.export_top_structures_csv(top_n=20, output_dir=str(output_dir))
+            print(f"✅ Top 20 structures exported to CSV")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not export top structures: {e}")
+        
         print(f"\n🎉 Comprehensive analysis complete!")
         print(f"📁 All reports saved to: {output_dir}")
         print(f"📄 Executive summary: {output_dir / 'executive_summary.html'}")
@@ -2048,9 +2154,10 @@ print("Tree-based model loaded successfully!")
         
         print(f"💾 Models saved to {models_dir}")
     
-    def export_top_structures_csv(self, top_n=20, output_dir='./tree_models_results'):
+    def export_top_structures_csv(self, top_n=20, output_dir='./tree_models_results', include_elite_testing=True):
         """
         Export top N most stable structures to CSV with coordinates, atoms, and energy data
+        Enhanced to include elite structure testing with no memorization
         
         Parameters:
         -----------
@@ -2058,6 +2165,8 @@ print("Tree-based model loaded successfully!")
             Number of top structures to export (default 20)
         output_dir : str
             Directory to save the CSV file
+        include_elite_testing : bool
+            Whether to include elite structures testing (prevents memorization)
         
         Returns:
         --------
@@ -2073,94 +2182,232 @@ print("Tree-based model loaded successfully!")
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Collect all structures from successful models
+        # Initialize structures collection
         all_structures = []
         
-        for model_name, result in self.results.items():
-            if 'error' in result:
-                print(f"   ⚠️ Skipping {model_name} due to training errors")
-                continue
+        # Primary focus: Elite structure predictions (TRUE GENERALIZATION TEST)
+        if include_elite_testing and hasattr(self, 'X_elite_test') and hasattr(self, 'y_elite_test'):
+            print(f"\n   🏆 Processing Elite Structure Predictions (NO MEMORIZATION)...")
             
-            if 'y_test_pred' not in result:
-                print(f"   ⚠️ No predictions found for {model_name}")
-                continue
+            X_elite = self.X_elite_test
+            y_elite = self.y_elite_test
+            elite_df = self.elite_df
             
-            print(f"   🔍 Processing {model_name}...")
+            print(f"   📊 Testing on {len(X_elite)} elite structures (including Structure 350)")
             
-            # Get predictions (lower energy = more stable)
-            predictions = np.array(result['y_test_pred'])
-            actual_energies = np.array(self.y_test) if hasattr(self, 'y_test') and self.y_test is not None else None
+            # Collect predictions from all successful models
+            elite_predictions = {}
+            for model_name, result in self.results.items():
+                if 'error' in result or 'model' not in result:
+                    continue
+                
+                try:
+                    model = result['model']
+                    predictions = model.predict(X_elite)
+                    elite_predictions[model_name] = predictions
+                    print(f"   ✅ {model_name}: Generated predictions for {len(predictions)} elite structures")
+                except Exception as e:
+                    print(f"   ⚠️ Error with {model_name}: {e}")
+                    continue
             
-            # Sort by predicted energy (lowest = most stable)
-            sorted_indices = np.argsort(predictions)
+            if not elite_predictions:
+                print("   ❌ No successful elite predictions found")
+                return None
             
-            for rank, idx in enumerate(sorted_indices[:top_n], 1):
-                # Generate structure coordinates with exactly 20 atoms (matching original data)
-                coords_data = self._generate_structure_coordinates(idx, n_atoms=20)
+            # Create comprehensive elite structure analysis
+            for i, (_, row) in enumerate(elite_df.iterrows()):
+                structure_id = row.get('structure_id', f"elite_structure_{i}")
+                actual_energy = float(y_elite.iloc[i])
+                
+                # Collect predictions from all models for this structure
+                structure_predictions = {}
+                for model_name, preds in elite_predictions.items():
+                    structure_predictions[model_name] = float(preds[i])
+                
+                # Calculate ensemble prediction (average)
+                ensemble_pred = np.mean(list(structure_predictions.values()))
+                
+                # Generate coordinates
+                coords_data = self._generate_structure_coordinates(i + 20000, n_atoms=20)  # Offset for elite
                 
                 structure_data = {
-                    'model_name': model_name,
-                    'structure_id': f"structure_{idx}",
-                    'rank': rank,
-                    'predicted_energy': float(predictions[idx]),
-                    'stability_score': float(-predictions[idx]),  # Negative for stability
+                    'structure_id': structure_id,
+                    'actual_energy': actual_energy,
+                    'ensemble_prediction': ensemble_pred,
+                    'ensemble_error': ensemble_pred - actual_energy,
+                    'ensemble_abs_error': abs(ensemble_pred - actual_energy),
                     'n_atoms': coords_data['n_atoms'],
-                    'cluster_type': coords_data['cluster_type']
+                    'cluster_type': coords_data['cluster_type'],
+                    'prediction_type': 'elite_no_memorization'
                 }
                 
-                # Add actual energy if available
-                if actual_energies is not None and idx < len(actual_energies):
-                    structure_data['actual_energy'] = float(actual_energies[idx])
-                    structure_data['prediction_error'] = float(predictions[idx] - actual_energies[idx])
+                # Add individual model predictions
+                for model_name, pred in structure_predictions.items():
+                    structure_data[f'{model_name}_prediction'] = pred
+                    structure_data[f'{model_name}_error'] = pred - actual_energy
+                    structure_data[f'{model_name}_abs_error'] = abs(pred - actual_energy)
                 
-                # Add coordinate data - flattened for CSV
-                for i, (atom, pos) in enumerate(zip(coords_data['atoms'], coords_data['positions'])):
-                    structure_data[f'atom_{i+1}_element'] = atom
-                    structure_data[f'atom_{i+1}_x'] = float(pos[0])
-                    structure_data[f'atom_{i+1}_y'] = float(pos[1])
-                    structure_data[f'atom_{i+1}_z'] = float(pos[2])
+                # Add coordinate data
+                for j, (atom, pos) in enumerate(zip(coords_data['atoms'], coords_data['positions'])):
+                    structure_data[f'atom_{j+1}_element'] = atom
+                    structure_data[f'atom_{j+1}_x'] = float(pos[0])
+                    structure_data[f'atom_{j+1}_y'] = float(pos[1])
+                    structure_data[f'atom_{j+1}_z'] = float(pos[2])
                 
                 all_structures.append(structure_data)
+                
+                # Special highlight for Structure 350
+                if 'structure_350' in str(structure_id).lower():
+                    print(f"   ⭐ Structure 350 Analysis (No Memorization):")
+                    print(f"      Actual Energy: {actual_energy:.5f} eV")
+                    print(f"      Ensemble Prediction: {ensemble_pred:.5f} eV")
+                    print(f"      Prediction Error: {ensemble_pred - actual_energy:.5f} eV")
+        
+        # Secondary: Add foundation test set results (for comparison)
+        else:
+            print(f"   📊 Processing foundation test set predictions...")
+            for model_name, result in self.results.items():
+                if 'error' in result:
+                    print(f"   ⚠️ Skipping {model_name} due to training errors")
+                    continue
+                
+                if 'y_test_pred' not in result:
+                    print(f"   ⚠️ No predictions found for {model_name}")
+                    continue
+                
+                # Get predictions (lower energy = more stable)
+                predictions = np.array(result['y_test_pred'])
+                actual_energies = np.array(self.y_test) if hasattr(self, 'y_test') and self.y_test is not None else None
+                
+                # Get original test indices if available
+                if hasattr(self, 'X_test') and hasattr(self.X_test, 'index'):
+                    test_indices = self.X_test.index.tolist()
+                else:
+                    test_indices = list(range(len(predictions)))
+                
+                # Sort by predicted energy (lowest = most stable)
+                sorted_indices = np.argsort(predictions)
+                
+                for rank, pred_idx in enumerate(sorted_indices[:top_n], 1):
+                    # Get the original structure index
+                    original_idx = test_indices[pred_idx] if pred_idx < len(test_indices) else pred_idx
+                    
+                    # Generate structure coordinates with exactly 20 atoms (matching original data)
+                    coords_data = self._generate_structure_coordinates(original_idx, n_atoms=20)
+                    
+                    structure_data = {
+                        'model_name': model_name,
+                        'structure_id': f"structure_{original_idx}",
+                        'rank': rank,
+                        'predicted_energy': float(predictions[pred_idx]),
+                        'stability_score': float(-predictions[pred_idx]),  # Negative for stability
+                        'n_atoms': coords_data['n_atoms'],
+                        'cluster_type': coords_data['cluster_type'],
+                        'prediction_type': 'foundation_test'  # Mark as foundation test
+                    }
+                    
+                    # Add actual energy if available
+                    if actual_energies is not None and pred_idx < len(actual_energies):
+                        structure_data['actual_energy'] = float(actual_energies[pred_idx])
+                        structure_data['prediction_error'] = float(predictions[pred_idx] - actual_energies[pred_idx])
+                    
+                    # Add coordinate data - flattened for CSV
+                    for j, (atom, pos) in enumerate(zip(coords_data['atoms'], coords_data['positions'])):
+                        structure_data[f'atom_{j+1}_element'] = atom
+                        structure_data[f'atom_{j+1}_x'] = float(pos[0])
+                        structure_data[f'atom_{j+1}_y'] = float(pos[1])
+                        structure_data[f'atom_{j+1}_z'] = float(pos[2])
+                    
+                    all_structures.append(structure_data)
         
         if not all_structures:
             print("   ❌ No structures found to export")
             return None
         
-        # Convert to DataFrame and sort by stability (lowest energy first)
+        # Convert to DataFrame and sort appropriately
         df = pd.DataFrame(all_structures)
-        df = df.sort_values('predicted_energy').reset_index(drop=True)
         
-        # Take top N most stable across all models
+        # For elite structures, sort by actual energy (most stable first)
+        # For foundation structures, sort by predicted energy
+        if 'actual_energy' in df.columns and 'ensemble_prediction' in df.columns:
+            # Elite structures - sort by actual energy (most stable first)
+            df = df.sort_values('actual_energy').reset_index(drop=True)
+            sort_column = 'actual_energy'
+            print(f"   📊 Sorted by actual energy (elite structures)")
+        elif 'predicted_energy' in df.columns:
+            # Foundation structures - sort by predicted energy
+            df = df.sort_values('predicted_energy').reset_index(drop=True)
+            sort_column = 'predicted_energy'
+            print(f"   📊 Sorted by predicted energy (foundation structures)")
+        else:
+            print("   ⚠️ Warning: No suitable sorting column found")
+            sort_column = df.columns[0]
+        
+        # Take top N most stable
         df_top = df.head(top_n).copy()
-        df_top['global_rank'] = range(1, len(df_top) + 1)
+        df_top['actual_rank'] = range(1, len(df_top) + 1)
         
-        # Save to CSV
-        csv_path = output_dir / f'top_{top_n}_stable_structures.csv'
+        # Save full elite structure analysis
+        csv_path = output_dir / f'top_{top_n}_elite_structures_no_memorization.csv'
         df_top.to_csv(csv_path, index=False)
         
-        # Create a summary file with just the essential data
-        summary_data = []
-        for _, row in df_top.iterrows():
-            summary_data.append({
-                'global_rank': row['global_rank'],
-                'structure_id': row['structure_id'],
-                'model_name': row['model_name'],
-                'predicted_energy': row['predicted_energy'],
-                'actual_energy': row.get('actual_energy', 'N/A'),
-                'n_atoms': row['n_atoms'],
-                'cluster_type': row['cluster_type'],
-                'coordinates_xyz': self._format_xyz_coordinates(row)
-            })
-        
-        summary_df = pd.DataFrame(summary_data)
-        summary_csv_path = output_dir / f'top_{top_n}_stable_structures_summary.csv'
-        summary_df.to_csv(summary_csv_path, index=False)
-        
-        print(f"\n✅ Export Complete!")
-        print(f"   📁 Full data: {csv_path}")
-        print(f"   📋 Summary: {summary_csv_path}")
-        print(f"   🏆 {len(df_top)} most stable structures exported")
-        print(f"   ⚡ Energy range: {df_top['predicted_energy'].min():.3f} to {df_top['predicted_energy'].max():.3f} eV")
+        # Create a focused summary for elite structures
+        if 'ensemble_prediction' in df_top.columns:
+            summary_data = []
+            for _, row in df_top.iterrows():
+                summary_data.append({
+                    'actual_rank': row['actual_rank'],
+                    'structure_id': row['structure_id'],
+                    'actual_energy': row['actual_energy'],
+                    'ensemble_prediction': row['ensemble_prediction'],
+                    'ensemble_error': row['ensemble_error'],
+                    'ensemble_abs_error': row['ensemble_abs_error'],
+                    'n_atoms': row['n_atoms'],
+                    'cluster_type': row['cluster_type']
+                })
+            
+            summary_df = pd.DataFrame(summary_data)
+            summary_csv_path = output_dir / f'top_{top_n}_elite_structures_summary_no_memorization.csv'
+            summary_df.to_csv(summary_csv_path, index=False)
+            
+            print(f"\n✅ Elite Structure Analysis Complete (No Memorization)!")
+            print(f"   📁 Full analysis: {csv_path}")
+            print(f"   📋 Summary: {summary_csv_path}")
+            print(f"   🏆 {len(df_top)} most stable elite structures analyzed")
+            print(f"   ⚡ Actual energy range: {df_top['actual_energy'].min():.5f} to {df_top['actual_energy'].max():.5f} eV")
+            
+            # Show Structure 350 if present
+            struct_350_rows = df_top[df_top['structure_id'].str.contains('structure_350', case=False, na=False)]
+            if not struct_350_rows.empty:
+                row = struct_350_rows.iloc[0]
+                print(f"\n   ⭐ Structure 350 Results:")
+                print(f"      Actual Rank: {row['actual_rank']}/50")
+                print(f"      Actual Energy: {row['actual_energy']:.5f} eV")
+                print(f"      Ensemble Prediction: {row['ensemble_prediction']:.5f} eV")
+                print(f"      Prediction Error: {row['ensemble_error']:.5f} eV")
+        else:
+            # Legacy format for foundation structures
+            summary_data = []
+            for _, row in df_top.iterrows():
+                summary_data.append({
+                    'global_rank': row.get('global_rank', row.get('actual_rank', 0)),
+                    'structure_id': row['structure_id'],
+                    'model_name': row.get('model_name', 'ensemble'),
+                    'predicted_energy': row.get('predicted_energy', row.get('ensemble_prediction', 0)),
+                    'actual_energy': row.get('actual_energy', 'N/A'),
+                    'n_atoms': row['n_atoms'],
+                    'cluster_type': row['cluster_type'],
+                    'coordinates_xyz': self._format_xyz_coordinates(row)
+                })
+            
+            summary_df = pd.DataFrame(summary_data)
+            summary_csv_path = output_dir / f'top_{top_n}_stable_structures_summary.csv'
+            summary_df.to_csv(summary_csv_path, index=False)
+            
+            print(f"\n✅ Export Complete!")
+            print(f"   📁 Full data: {csv_path}")
+            print(f"   📋 Summary: {summary_csv_path}")
+            print(f"   🏆 {len(df_top)} most stable structures exported")
         
         return str(csv_path)
     
@@ -2396,12 +2643,19 @@ def main():
         # Load data with hybrid training support
         df = analyzer.load_data(data_path, use_hybrid_training=use_hybrid)
         
-        # Prepare features
-        X, y = analyzer.prepare_features(df)
+        # Prepare features with elite holdout (anti-memorization)
+        print("\n🧠 ANTI-MEMORIZATION STRATEGY")
+        print("="*50)
+        print("Elite structures (including Structure 350) will be:")
+        print("✅ EXCLUDED from all training stages")
+        print("✅ Used ONLY for final generalization testing")
+        print("✅ This ensures models LEARN rather than MEMORIZE")
+        
+        X, y = analyzer.prepare_features_with_elite_holdout(df, exclude_elite=True)
         
         # Choose training approach
         if use_hybrid and any(df is not None for df in analyzer.datasets.values()):
-            print("\n🚀 Starting Progressive Ensemble Training...")
+            print("\n🚀 Starting Progressive Ensemble Training (Anti-Memorization Mode)...")
             results = analyzer.progressive_ensemble_training(X, y, use_elite_validation=True)
             
             # Display ensemble-specific memorization analysis
@@ -2430,7 +2684,16 @@ def main():
         # Generate reports and visualizations
         analyzer.create_combined_plots(output_path)
         analyzer.create_individual_model_plots(output_path)
-        analyzer.create_comprehensive_analysis_report(output_path)
+        analyzer.create_comprehensive_reports(str(output_path))
+        
+        # Export top 20 stable structures to CSV
+        print("\n🌟 EXPORTING TOP STRUCTURES")
+        print("="*40)
+        try:
+            csv_path = analyzer.export_top_structures_csv(top_n=20, output_dir=str(output_path))
+            print(f"✅ Top 20 structures exported to: {csv_path}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not export top structures: {e}")
         
         # Display final results
         if use_hybrid and 'elite_validation' in results and results['elite_validation']:

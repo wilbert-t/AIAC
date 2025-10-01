@@ -20,4 +20,4 @@ Features Used: 25
 Feature Selection: 25
 Best Parameters: {'model__C': 100, 'model__epsilon': 0.1, 'model__gamma': 0.01}
 
-Training Date: 2025-10-01T14:22:47.886982
+Training Date: 2025-10-01T19:10:01.888039

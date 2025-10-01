@@ -12,7 +12,7 @@ from pathlib import Path
 
 def load_structure_350():
     """Load structure 350 coordinates from XYZ file"""
-    xyz_file = Path("data/Au20_OPT_1000/960.xyz")
+    xyz_file = Path("data/Au20_OPT_1000/161.xyz")
     
     if not xyz_file.exists():
         print(f"Error: {xyz_file} not found")

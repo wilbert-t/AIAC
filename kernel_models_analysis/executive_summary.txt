@@ -2,7 +2,7 @@
 KERNEL METHODS ANALYSIS - EXECUTIVE SUMMARY
 ================================================================================
 
-Analysis Date: 2025-10-01T14:22:47.886982
+Analysis Date: 2025-10-01T19:10:01.888039
 Data Source: ./au_cluster_analysis_results/descriptors.csv
 
 DATA OVERVIEW:
