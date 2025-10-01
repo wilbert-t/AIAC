@@ -1,0 +1,34 @@
+{
+  "model_name": "svr_linear",
+  "model_type": "SVR",
+  "performance": {
+    "test_r2": 0.7846686230791475,
+    "test_rmse": 1.313116549139874,
+    "test_mae": 0.9483017481561524,
+    "cv_r2_mean": 0.7761423757312615,
+    "cv_r2_std": 0.032250647152822984
+  },
+  "training_info": {
+    "train_samples": 799,
+    "test_samples": 200,
+    "features": 15,
+    "feature_names": [
+      "mean_bond_length",
+      "std_bond_length",
+      "n_bonds",
+      "mean_coordination",
+      "std_coordination",
+      "max_coordination",
+      "radius_of_gyration",
+      "asphericity",
+      "surface_fraction",
+      "x_range",
+      "y_range",
+      "z_range",
+      "anisotropy",
+      "compactness",
+      "bond_variance"
+    ]
+  },
+  "hyperparameters": {}
+}

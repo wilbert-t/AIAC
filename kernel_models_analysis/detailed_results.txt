@@ -1,31 +1,9 @@
 DETAILED MODEL RESULTS
 ============================================================
 
-MODEL: ELASTIC_NET
-----------------------------------------
-Description: Linear regression with L1+L2 regularization
-Status: ✅ GOOD
-
-Performance Metrics:
-  Train R²: 0.9214
-  Test R²: 0.9027
-  Train RMSE: 0.8061
-  Test RMSE: 0.8937
-  Train MAE: 0.5860
-  Test MAE: 0.6582
-  CV R² Mean: 0.6276 ± 0.0343
-  Overfitting Gap: 0.0187
-
-Configuration:
-  Features Used: 45
-  Feature Selection: None
-  Best Parameters: {'model__alpha': 0.1, 'model__l1_ratio': 0.1}
-
-============================================================
-
 MODEL: SVR_RBF_CONSERVATIVE
 ----------------------------------------
-Description: Support Vector Regression with RBF kernel
+Description: Support Vector Regression with RBF kernel - non-linear kernel method
 Status: ✅ GOOD
 
 Performance Metrics:
@@ -42,50 +20,6 @@ Configuration:
   Features Used: 25
   Feature Selection: 25
   Best Parameters: {'model__C': 100, 'model__epsilon': 0.1, 'model__gamma': 0.01}
-
-============================================================
-
-MODEL: SVR_LINEAR
-----------------------------------------
-Description: Support Vector Regression with linear kernel
-Status: ✅ GOOD
-
-Performance Metrics:
-  Train R²: 0.9280
-  Test R²: 0.9081
-  Train RMSE: 0.7716
-  Test RMSE: 0.8684
-  Train MAE: 0.5746
-  Test MAE: 0.6304
-  CV R² Mean: 0.9046 ± 0.0232
-  Overfitting Gap: 0.0199
-
-Configuration:
-  Features Used: 45
-  Feature Selection: None
-  Best Parameters: {'model__C': 0.1, 'model__epsilon': 1.0}
-
-============================================================
-
-MODEL: KNN_STABLE
-----------------------------------------
-Description: K-Nearest Neighbors Regression
-Status: ⚠️ OVERFITTING
-
-Performance Metrics:
-  Train R²: 1.0000
-  Test R²: 0.8406
-  Train RMSE: 0.0000
-  Test RMSE: 1.1437
-  Train MAE: 0.0000
-  Test MAE: 0.7688
-  CV R² Mean: 0.7967 ± 0.0260
-  Overfitting Gap: 0.1594
-
-Configuration:
-  Features Used: 15
-  Feature Selection: 15
-  Best Parameters: {'model__metric': 'manhattan', 'model__n_neighbors': 5, 'model__weights': 'distance'}
 
 ============================================================
 

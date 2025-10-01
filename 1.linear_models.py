@@ -13,6 +13,7 @@ from sklearn.linear_model import (
     LinearRegression, Ridge, Lasso, ElasticNet, 
     RidgeCV, LassoCV, ElasticNetCV
 )
+from sklearn.svm import SVR
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.decomposition import PCA
@@ -65,6 +66,21 @@ class LinearModelsAnalyzer:
         
         # Initialize models with justifications
         self.model_configs = {
+            'svr_linear': {
+                'model': SVR(kernel='linear', cache_size=1000),
+                'params': {
+                    'C': [0.1, 1, 10],
+                    'epsilon': [0.1, 0.5, 1.0]
+                },
+                'justification': """
+                SVR Linear:
+                - Support Vector Regression with linear kernel
+                - Robust to outliers through support vector mechanism
+                - Effective for high-dimensional data
+                - Memory efficient with linear kernel
+                - Good baseline for linear SVR approaches
+                """
+            },
             'linear': {
                 'model': LinearRegression(),
                 'params': {},
@@ -115,19 +131,61 @@ class LinearModelsAnalyzer:
             }
         }
     
-    def load_data(self, data_path, target_column='energy'):
-        """Load data from task1.py output"""
+    def load_data(self, data_path=None, target_column='energy', use_hybrid_training=True):
+        """
+        Enhanced data loading with hybrid training support
+        
+        Args:
+            data_path: Path to original descriptors.csv (999 structures)
+            target_column: Target variable name
+            use_hybrid_training: Whether to use progressive training approach
+        """
+        # Load original 999 structures for foundation learning
+        if data_path is None:
+            data_path = "./au_cluster_analysis_results/descriptors.csv"
+        
         if isinstance(data_path, str):
-            self.df = pd.read_csv(data_path)
+            self.df_foundation = pd.read_csv(data_path)
         else:
-            self.df = data_path
+            self.df_foundation = data_path
         
-        self.df = self.df.dropna(subset=[target_column])
+        self.df_foundation = self.df_foundation.dropna(subset=[target_column])
         
-        print(f"Loaded {len(self.df)} samples")
-        print(f"Target range: {self.df[target_column].min():.2f} to {self.df[target_column].max():.2f}")
+        # Load categorized high-quality datasets
+        self.datasets = {}
+        dataset_files = {
+            'balanced': './improved_dataset_balanced.csv',
+            'high_quality': './improved_dataset_high_quality.csv', 
+            'elite': './improved_dataset_elite.csv'
+        }
         
-        return self.df
+        if use_hybrid_training:
+            print("🔄 Loading hybrid training datasets...")
+            
+            for name, file_path in dataset_files.items():
+                try:
+                    df = pd.read_csv(file_path)
+                    df = df.dropna(subset=[target_column])
+                    self.datasets[name] = df
+                    print(f"   ✅ {name}: {len(df)} structures")
+                except FileNotFoundError:
+                    print(f"   ⚠️  {name}: File not found - {file_path}")
+                    self.datasets[name] = None
+        
+        # Set primary dataset for initial analysis
+        self.df = self.df_foundation
+        
+        print(f"\n📊 Dataset Summary:")
+        print(f"   Foundation (999): {len(self.df_foundation)} samples")
+        print(f"   Target range: {self.df_foundation[target_column].min():.2f} to {self.df_foundation[target_column].max():.2f}")
+        
+        if use_hybrid_training and any(df is not None for df in self.datasets.values()):
+            print(f"   Hybrid training: ENABLED")
+            for name, df in self.datasets.items():
+                if df is not None:
+                    print(f"   - {name}: {len(df)} samples")
+        
+        return self.df_foundation
     
     def tune_soap_params(self, structures_data, basic_features_df, y, n_components=None):
         """Tune SOAP hyperparameters using grid search and cross-validation."""
@@ -299,12 +357,16 @@ class LinearModelsAnalyzer:
             
         return self.soap_features
     
-    def prepare_features(self, target_column='energy', include_soap=True):
+    def prepare_features(self, df=None, target_column='energy', include_soap=True):
         """Prepare feature matrix and target vector"""
+        # Use provided dataframe or default to self.df
+        if df is None:
+            df = self.df
+            
         feature_cols = []
         
         # EXCLUDE ENERGY-DERIVED FEATURES TO PREVENT DATA LEAKAGE
-        exclude_features = ['energy_per_atom', 'filename', 'Unnamed: 0', target_column]
+        exclude_features = ['energy_per_atom', 'filename', 'Unnamed: 0', target_column, 'structure_id']
         
         basic_features = [
             'mean_bond_length', 'std_bond_length', 'n_bonds',
@@ -316,20 +378,21 @@ class LinearModelsAnalyzer:
         
         # Filter out any excluded features from basic features
         available_basic = [f for f in basic_features 
-                          if f in self.df.columns and f not in exclude_features]
+                          if f in df.columns and f not in exclude_features]
         feature_cols.extend(available_basic)
         
-        if include_soap and self.soap_features:
+        if include_soap and hasattr(self, 'soap_features') and self.soap_features:
             feature_cols.extend(self.soap_features)
             print(f"Using {len(self.soap_features)} SOAP features")
         
-        feature_cols = [f for f in feature_cols if f in self.df.columns]
-        data_clean = self.df[feature_cols + [target_column]].dropna()
+        feature_cols = [f for f in feature_cols if f in df.columns]
+        data_clean = df[feature_cols + [target_column]].dropna()
         
         X = data_clean[feature_cols]
         y = data_clean[target_column]
         
-        self.feature_names = feature_cols
+        if df is self.df:  # Only set feature_names for main dataframe
+            self.feature_names = feature_cols
         
         print(f"Feature matrix shape: {X.shape}")
         print(f"Using features: {len(feature_cols)} total")
@@ -362,6 +425,190 @@ class LinearModelsAnalyzer:
             'val_scores_std': val_scores.std(axis=1)
         }
     
+    def progressive_hybrid_training(self, X_foundation, y_foundation, use_elite_validation=True):
+        """
+        Progressive hybrid training: Foundation → Quality Refinement → Elite Validation
+        
+        Args:
+            X_foundation: Features from 999 structures
+            y_foundation: Targets from 999 structures
+            use_elite_validation: Whether to use elite dataset for final validation
+        
+        Returns:
+            dict: Comprehensive training results across all stages
+        """
+        print("\n" + "="*70)
+        print("🚀 PROGRESSIVE HYBRID TRAINING PIPELINE")
+        print("="*70)
+        
+        results = {
+            'foundation_results': {},
+            'refinement_results': {},
+            'elite_validation': {},
+            'learning_curves': {},
+            'anti_memorization_metrics': {}
+        }
+        
+        # Stage 1: Foundation Learning (999 structures)
+        print("\n📚 STAGE 1: Foundation Learning (999 structures)")
+        print("-" * 50)
+        
+        foundation_results = self.train_models(X_foundation, y_foundation, test_size=0.2)
+        results['foundation_results'] = foundation_results
+        
+        # Stage 2: Quality Refinement (if high-quality dataset available)
+        if self.datasets.get('high_quality') is not None:
+            print("\n🎯 STAGE 2: Quality Refinement (High-Quality subset)")
+            print("-" * 50)
+            
+            # Prepare high-quality data
+            X_hq, y_hq, _ = self.prepare_features(self.datasets['high_quality'])
+            
+            # Transfer learning: use foundation models as starting point
+            refinement_results = {}
+            for model_name, foundation_model_data in foundation_results.items():
+                print(f"\n🔄 Refining {model_name}...")
+                
+                # Get the trained model from the results
+                if 'pipeline' in foundation_model_data:
+                    model = foundation_model_data['pipeline']
+                elif 'model' in foundation_model_data:
+                    model = foundation_model_data['model']  
+                else:
+                    print(f"   ⚠️ No model found for {model_name}")
+                    continue
+                
+                # Fine-tune on high-quality data
+                refined_result = self._fine_tune_model(
+                    model, X_hq, y_hq, model_name
+                )
+                refinement_results[model_name] = refined_result
+            
+            results['refinement_results'] = refinement_results
+        
+        # Stage 3: Elite Validation (if elite dataset available)
+        if use_elite_validation and self.datasets.get('elite') is not None:
+            print("\n🏆 STAGE 3: Elite Validation (Never-seen structures)")
+            print("-" * 50)
+            
+            X_elite, y_elite, _ = self.prepare_features(self.datasets['elite'])
+            
+            elite_results = {}
+            source_results = results.get('refinement_results', results['foundation_results'])
+            
+            for model_name, model_data in source_results.items():
+                if 'model' in model_data:
+                    elite_scores = self._validate_on_elite(
+                        model_data['model'], X_elite, y_elite, model_name
+                    )
+                    elite_results[model_name] = elite_scores
+            
+            results['elite_validation'] = elite_results
+        
+        # Anti-memorization analysis
+        if len(results['foundation_results']) > 0:
+            results['anti_memorization_metrics'] = self._analyze_memorization(
+                results['foundation_results'], 
+                results.get('refinement_results', {}),
+                results.get('elite_validation', {})
+            )
+        
+        return results
+    
+    def _fine_tune_model(self, foundation_model, X_hq, y_hq, model_name):
+        """Fine-tune a foundation model on high-quality data"""
+        from sklearn.base import clone
+        
+        # Clone the foundation model
+        model = clone(foundation_model)
+        
+        # Prepare data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_hq, y_hq, test_size=0.3, random_state=self.random_state
+        )
+        
+        # Scale data
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Fit model
+        model.fit(X_train_scaled, y_train)
+        
+        # Predict and evaluate
+        y_pred = model.predict(X_test_scaled)
+        
+        scores = {
+            'model': model,
+            'scaler': scaler,
+            'r2': r2_score(y_test, y_pred),
+            'mse': mean_squared_error(y_test, y_pred),
+            'mae': mean_absolute_error(y_test, y_pred),
+            'predictions': y_pred,
+            'actuals': y_test
+        }
+        
+        print(f"   ✅ {model_name}: R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+        return scores
+    
+    def _validate_on_elite(self, model, X_elite, y_elite, model_name):
+        """Validate model on elite dataset (never-seen structures)"""
+        # Use the model's associated scaler if available
+        if hasattr(model, 'named_steps') and 'scaler' in model.named_steps:
+            X_elite_scaled = model.named_steps['scaler'].transform(X_elite)
+            y_pred = model.named_steps['model'].predict(X_elite_scaled)
+        else:
+            # Assume model includes scaling or use StandardScaler
+            scaler = StandardScaler()
+            X_elite_scaled = scaler.fit_transform(X_elite)
+            y_pred = model.predict(X_elite_scaled)
+        
+        scores = {
+            'r2': r2_score(y_elite, y_pred),
+            'mse': mean_squared_error(y_elite, y_pred),
+            'mae': mean_absolute_error(y_elite, y_pred),
+            'predictions': y_pred,
+            'actuals': y_elite
+        }
+        
+        print(f"   🏆 {model_name}: Elite R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+        return scores
+    
+    def _analyze_memorization(self, foundation_results, refinement_results, elite_results):
+        """Analyze whether models are learning vs. memorizing"""
+        memorization_metrics = {}
+        
+        for model_name in foundation_results:
+            metrics = {}
+            
+            # Foundation performance
+            foundation_r2 = foundation_results.get(model_name, {}).get('test_r2', 0)
+            metrics['foundation_r2'] = foundation_r2
+            
+            # Refinement performance (if available)
+            if model_name in refinement_results:
+                refinement_r2 = refinement_results[model_name].get('r2', 0)
+                metrics['refinement_r2'] = refinement_r2
+                metrics['refinement_improvement'] = refinement_r2 - foundation_r2
+            
+            # Elite validation (if available)
+            if model_name in elite_results:
+                elite_r2 = elite_results[model_name].get('r2', 0)
+                metrics['elite_r2'] = elite_r2
+                metrics['generalization_gap'] = foundation_r2 - elite_r2
+                
+                # Memorization indicator: large gap suggests overfitting
+                if metrics['generalization_gap'] > 0.1:
+                    metrics['memorization_risk'] = 'HIGH'
+                elif metrics['generalization_gap'] > 0.05:
+                    metrics['memorization_risk'] = 'MEDIUM'
+                else:
+                    metrics['memorization_risk'] = 'LOW'
+            
+            memorization_metrics[model_name] = metrics
+        
+        return memorization_metrics
+
     def train_models(self, X, y, test_size=0.2):
         """Train all linear models with comprehensive analysis"""
         print("\n" + "="*60)
@@ -392,7 +639,16 @@ class LinearModelsAnalyzer:
             X_test_scaled = scaler.transform(X_test)
             
             # Train model
-            model.fit(X_train_scaled, y_train)
+            if name == 'svr_linear' and config['params']:
+                # SVR needs grid search for hyperparameters
+                from sklearn.model_selection import GridSearchCV
+                grid_search = GridSearchCV(model, config['params'], cv=5, scoring='r2', n_jobs=-1)
+                grid_search.fit(X_train_scaled, y_train)
+                model = grid_search.best_estimator_
+                print(f"   Best params: {grid_search.best_params_}")
+            else:
+                # Regular training for CV models
+                model.fit(X_train_scaled, y_train)
             
             # Predictions
             y_train_pred = model.predict(X_train_scaled)
@@ -769,13 +1025,13 @@ Normality p: {stats_dict['normality_pvalue']:.3f}"""
     
     def _plot_combined_predictions_vs_actual(self, output_dir):
         """Combined predictions vs actual plot for all models"""
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))  # Changed to 2x3 for 5 models
         axes = axes.flatten()
         
-        colors = ['blue', 'green', 'orange', 'red']
+        colors = ['blue', 'green', 'orange', 'red', 'purple']
         
         for i, (name, result) in enumerate(self.results.items()):
-            if i >= 4:
+            if i >= len(self.results):
                 break
                 
             y_true = self.y_test
@@ -801,6 +1057,10 @@ Normality p: {stats_dict['normality_pvalue']:.3f}"""
             axes[i].legend()
             axes[i].grid(True, alpha=0.3)
         
+        # Hide unused subplot (6th position in 2x3 grid)
+        if len(self.results) < 6:
+            axes[5].set_visible(False)
+        
         plt.tight_layout()
         plt.savefig(output_dir / 'combined_predictions_vs_actual.png', dpi=300, bbox_inches='tight')
         plt.close()
@@ -809,7 +1069,7 @@ Normality p: {stats_dict['normality_pvalue']:.3f}"""
         """Combined residual analysis for all models"""
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
         
-        colors = ['blue', 'green', 'orange', 'red']
+        colors = ['blue', 'green', 'orange', 'red', 'purple']
         
         # Combined residuals vs predicted
         for i, (name, result) in enumerate(self.results.items()):
@@ -882,7 +1142,7 @@ Normality p: {stats_dict['normality_pvalue']:.3f}"""
         """Combined learning curves for all models"""
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
         
-        colors = ['blue', 'green', 'orange', 'red']
+        colors = ['blue', 'green', 'orange', 'red', 'purple']
         
         for i, (name, data) in enumerate(self.learning_curves.items()):
             train_sizes = data['train_sizes']
@@ -1319,8 +1579,8 @@ print("Models loaded successfully!")
             sorted_indices = np.argsort(predictions)
             
             for rank, idx in enumerate(sorted_indices[:top_n], 1):
-                # Generate structure coordinates (simplified Au cluster)
-                coords_data = self._generate_structure_coordinates(idx, n_atoms=min(20, max(8, idx % 15 + 8)))
+                # Generate structure coordinates with exactly 20 atoms (matching original data)
+                coords_data = self._generate_structure_coordinates(idx, n_atoms=20)
                 
                 structure_data = {
                     'model_name': model_name,
@@ -1551,32 +1811,44 @@ Best Test R²: {:.4f}
         print(f"📊 PDF report saved to {pdf_path}")
 
 def main():
-    """Main execution function with comprehensive reporting"""
+    """Main execution function with enhanced hybrid training"""
     print("🔬 Enhanced Linear & Regularized Models Analysis for Au Clusters")
     print("="*70)
     
     # Initialize analyzer
     analyzer = LinearModelsAnalyzer(random_state=42)
     
-    # Load data
+    # Load data with hybrid training support
     try:
+        # Ask user about training approach
+        training_mode = input("Choose training mode:\n1. Standard (999 structures only)\n2. Hybrid (999 + categorized datasets)\nEnter choice (1/2, default=2): ").strip()
+        use_hybrid = training_mode != '1'
+        
         data_path = input("Enter path to descriptors.csv (default: ./au_cluster_analysis_results/descriptors.csv): ").strip()
         if not data_path:
             data_path = "./au_cluster_analysis_results/descriptors.csv"
         
-        analyzer.load_data(data_path)
+        analyzer.load_data(data_path, use_hybrid_training=use_hybrid)
         
-        # Optional: SOAP features (user needs to provide structures_data)
-        # structures_data = None  # Set to actual structures data if available
-        # if structures_data:
-        #     analyzer.tune_soap_params(structures_data, basic_features_df, y, n_components=50)
-        #     analyzer.create_soap_features(structures_data, use_tuned_params=True, n_components=50)
-        
-        # Prepare features
+        # Prepare features from foundation dataset (999 structures)
         X, y, feature_names = analyzer.prepare_features(target_column='energy')
         
-        # Train models
-        results = analyzer.train_models(X, y)
+        # Choose training approach
+        if use_hybrid and any(df is not None for df in analyzer.datasets.values()):
+            print("\n🚀 Starting Progressive Hybrid Training...")
+            results = analyzer.progressive_hybrid_training(X, y, use_elite_validation=True)
+            
+            # Display memorization analysis
+            if results.get('anti_memorization_metrics'):
+                print("\n🧠 Anti-Memorization Analysis:")
+                print("-" * 40)
+                for model_name, metrics in results['anti_memorization_metrics'].items():
+                    risk = metrics.get('memorization_risk', 'UNKNOWN')
+                    gap = metrics.get('generalization_gap', 0)
+                    print(f"{model_name:15s}: Risk={risk:6s}, Gap={gap:+.4f}")
+        else:
+            print("\n📚 Using Standard Training (999 structures)...")
+            results = analyzer.train_models(X, y)
         
         # Create comprehensive reports
         summary_df, summary_stats = analyzer.create_comprehensive_reports()
@@ -1603,9 +1875,17 @@ def main():
         if create_pdf == 'y':
             analyzer.create_pdf_report(Path('./linear_models_results'))
         
-        print(f"\n🎉 Analysis Complete!")
-        print(f"🏆 Best Model: {summary_stats['best_model']}")
-        print(f"📈 Best Test R²: {summary_stats['best_test_r2']:.4f}")
+        # Display final results
+        if use_hybrid and 'elite_validation' in results and results['elite_validation']:
+            print(f"\n🎉 Hybrid Training Complete!")
+            print(f"🏆 Elite Validation Results:")
+            for model, scores in results['elite_validation'].items():
+                print(f"   {model:15s}: R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+        else:
+            print(f"\n🎉 Analysis Complete!")
+            print(f"🏆 Best Model: {summary_stats['best_model']}")
+            print(f"📈 Best Test R²: {summary_stats['best_test_r2']:.4f}")
+        
         print(f"📁 Results saved to: ./linear_models_results/")
         print(f"📊 Summary statistics: ./linear_models_results/summary_statistics.json")
         

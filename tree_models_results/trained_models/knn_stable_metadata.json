@@ -1,0 +1,54 @@
+{
+  "model_name": "knn_stable",
+  "model_type": "KNeighborsRegressor",
+  "performance": {
+    "test_r2": 0.809250231930222,
+    "test_rmse": 1.2358951424933597,
+    "test_mae": 0.8514322778897713,
+    "cv_r2_mean": 0.8014892222778801,
+    "cv_r2_std": 0.029764266744477484
+  },
+  "training_info": {
+    "train_samples": 799,
+    "test_samples": 200,
+    "features": 30,
+    "feature_names": [
+      "mean_bond_length",
+      "std_bond_length",
+      "n_bonds",
+      "mean_coordination",
+      "std_coordination",
+      "max_coordination",
+      "radius_of_gyration",
+      "asphericity",
+      "surface_fraction",
+      "x_range",
+      "y_range",
+      "z_range",
+      "anisotropy",
+      "compactness",
+      "bond_variance",
+      "soap_pc_1",
+      "soap_pc_2",
+      "soap_pc_3",
+      "soap_pc_4",
+      "soap_pc_5",
+      "soap_pc_6",
+      "soap_pc_7",
+      "soap_pc_8",
+      "soap_pc_9",
+      "soap_pc_10",
+      "soap_pc_11",
+      "soap_pc_12",
+      "soap_pc_13",
+      "soap_pc_14",
+      "soap_pc_15"
+    ]
+  },
+  "hyperparameters": {
+    "weights": "distance",
+    "n_neighbors": 5,
+    "metric": "manhattan",
+    "algorithm": "auto"
+  }
+}

@@ -1,7 +1,7 @@
 MODEL INFORMATION: svr_rbf_conservative
 ==================================================
 
-Description: Support Vector Regression with RBF kernel
+Description: Support Vector Regression with RBF kernel - non-linear kernel method
 Status: ✅ GOOD
 
 PERFORMANCE METRICS:
@@ -20,4 +20,4 @@ Features Used: 25
 Feature Selection: 25
 Best Parameters: {'model__C': 100, 'model__epsilon': 0.1, 'model__gamma': 0.01}
 
-Training Date: 2025-09-30T02:32:27.784937
+Training Date: 2025-10-01T14:22:47.886982

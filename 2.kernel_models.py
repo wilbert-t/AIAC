@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-ENHANCED: Kernel Methods for Au Cluster Energy Prediction
+ENHANCED: Non-Linear Kernel Methods for Au Cluster Energy Prediction
+Focused on RBF kernel SVR for non-linear kernel-based approaches
 Complete documentation package with all files and visualizations
 """
 
@@ -19,8 +20,6 @@ from sklearn.model_selection import (
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
 from sklearn.kernel_ridge import KernelRidge
-from sklearn.neighbors import KNeighborsRegressor
-from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import SelectKBest, f_regression
@@ -46,7 +45,8 @@ sns.set_palette("husl")
 
 class ComprehensiveKernelAnalysis:
     """
-    Complete Kernel Methods Analysis with Full Documentation Package
+    Non-Linear Kernel Methods Analysis with Full Documentation Package
+    Focused on RBF kernel SVR for complex non-linear relationships
     """
     
     def __init__(self, random_state=42):
@@ -60,16 +60,6 @@ class ComprehensiveKernelAnalysis:
         
         # Model configurations with better hyperparameter ranges
         self.model_configs = {
-            'elastic_net': {
-                'model': ElasticNet(random_state=random_state, max_iter=5000),
-                'params': {
-                    'model__alpha': [0.1, 1.0, 10.0, 50.0],  # Higher regularization
-                    'model__l1_ratio': [0.1, 0.5, 0.9]       # Simplified grid
-                },
-                'feature_selection': None,
-                'description': 'Linear regression with L1+L2 regularization'
-            },
-            
             'svr_rbf_conservative': {
                 'model': SVR(kernel='rbf', cache_size=1000),
                 'params': {
@@ -78,28 +68,7 @@ class ComprehensiveKernelAnalysis:
                     'model__epsilon': [0.1, 0.5, 1.0]       # Larger epsilon for stability
                 },
                 'feature_selection': 25,  # More features for SOAP
-                'description': 'Support Vector Regression with RBF kernel'
-            },
-            
-            'svr_linear': {
-                'model': SVR(kernel='linear', cache_size=1000),
-                'params': {
-                    'model__C': [0.1, 1, 10],
-                    'model__epsilon': [0.1, 0.5, 1.0]
-                },
-                'feature_selection': None,
-                'description': 'Support Vector Regression with linear kernel'
-            },
-            
-            'knn_stable': {
-                'model': KNeighborsRegressor(n_jobs=-1),
-                'params': {
-                    'model__n_neighbors': [5, 10, 15, 20],    # Smaller neighborhoods
-                    'model__weights': ['uniform', 'distance'],
-                    'model__metric': ['euclidean', 'manhattan']
-                },
-                'feature_selection': 15,  # Feature selection for KNN
-                'description': 'K-Nearest Neighbors Regression'
+                'description': 'Support Vector Regression with RBF kernel - non-linear kernel method'
             }
         }
     
@@ -194,11 +163,76 @@ class ComprehensiveKernelAnalysis:
         
         return soap_df, pca_model
     
-    def load_and_prepare_data(self, data_path, target_column='energy'):
-        """Load and prepare data with comprehensive logging"""
+    def load_and_prepare_data(self, data_path=None, target_column='energy', use_hybrid_training=True):
+        """
+        Enhanced data loading with hybrid training support for kernel methods
+        
+        Args:
+            data_path: Path to original descriptors.csv (999 structures)
+            target_column: Target variable name
+            use_hybrid_training: Whether to use progressive training approach
+        """
         print("\n" + "="*70)
-        print("📁 DATA LOADING AND PREPARATION")
+        print("📁 ENHANCED DATA LOADING AND PREPARATION")
         print("="*70)
+        
+        # Load original 999 structures for foundation learning
+        if data_path is None:
+            data_path = "./au_cluster_analysis_results/descriptors.csv"
+        
+        # Load foundation data
+        if isinstance(data_path, str):
+            self.df_foundation = pd.read_csv(data_path)
+            print(f"✅ Loaded foundation data from: {data_path}")
+        else:
+            self.df_foundation = data_path
+            print("✅ Using provided DataFrame")
+        
+        # Store metadata
+        self.metadata['data_source'] = str(data_path) if isinstance(data_path, str) else 'DataFrame'
+        self.metadata['original_shape'] = self.df_foundation.shape
+        
+        # Load categorized high-quality datasets
+        self.datasets = {}
+        dataset_files = {
+            'balanced': './improved_dataset_balanced.csv',
+            'high_quality': './improved_dataset_high_quality.csv', 
+            'elite': './improved_dataset_elite.csv'
+        }
+        
+        if use_hybrid_training:
+            print("🔄 Loading hybrid training datasets for kernel methods...")
+            
+            for name, file_path in dataset_files.items():
+                try:
+                    df = pd.read_csv(file_path)
+                    df = df.dropna(subset=[target_column])
+                    self.datasets[name] = df
+                    print(f"   ✅ {name}: {len(df)} structures")
+                except FileNotFoundError:
+                    print(f"   ⚠️  {name}: File not found - {file_path}")
+                    self.datasets[name] = None
+        
+        # Basic cleaning for foundation data
+        initial_size = len(self.df_foundation)
+        self.df_foundation = self.df_foundation.dropna(subset=[target_column])
+        final_size = len(self.df_foundation)
+        
+        if initial_size != final_size:
+            print(f"⚠️  Removed {initial_size - final_size} rows with missing target values")
+        
+        # Set primary dataset for analysis
+        df = self.df_foundation
+        
+        print(f"\n📊 Dataset Summary:")
+        print(f"   Foundation (999): {len(self.df_foundation)} samples")
+        print(f"   Target range: {self.df_foundation[target_column].min():.2f} to {self.df_foundation[target_column].max():.2f}")
+        
+        if use_hybrid_training and any(df is not None for df in self.datasets.values()):
+            print(f"   Hybrid training: ENABLED for kernel methods")
+            for name, df_cat in self.datasets.items():
+                if df_cat is not None:
+                    print(f"   - {name}: {len(df_cat)} samples")
         
         # Load data
         if isinstance(data_path, str):
@@ -454,6 +488,242 @@ class ComprehensiveKernelAnalysis:
         
         return learning_curve_data
     
+    def progressive_kernel_training(self, X_foundation, y_foundation, use_elite_validation=True):
+        """
+        Progressive kernel training: Foundation → Parameter Optimization → Elite Validation
+        
+        Args:
+            X_foundation: Features from 999 structures
+            y_foundation: Targets from 999 structures
+            use_elite_validation: Whether to use elite dataset for final validation
+        
+        Returns:
+            dict: Comprehensive training results across all stages
+        """
+        print("\n" + "="*70)
+        print("🚀 PROGRESSIVE KERNEL TRAINING PIPELINE")
+        print("="*70)
+        
+        results = {
+            'foundation_results': {},
+            'parameter_optimization': {},
+            'elite_validation': {},
+            'kernel_analysis': {},
+            'anti_memorization_metrics': {}
+        }
+        
+        # Stage 1: Foundation Learning (999 structures)
+        print("\n📚 STAGE 1: Foundation Kernel Learning (999 structures)")
+        print("-" * 50)
+        
+        foundation_results = self.train_models(X_foundation, y_foundation, test_size=0.2)
+        results['foundation_results'] = foundation_results
+        
+        # Stage 2: Parameter Optimization (if high-quality dataset available)
+        if self.datasets.get('high_quality') is not None:
+            print("\n🎯 STAGE 2: Kernel Parameter Optimization (High-Quality subset)")
+            print("-" * 50)
+            
+            # Prepare high-quality data with same feature processing
+            X_hq, y_hq = self._prepare_dataset_features(self.datasets['high_quality'])
+            
+            # Optimize kernel parameters using high-quality data
+            optimization_results = self._optimize_kernel_parameters(
+                X_hq, y_hq, foundation_results
+            )
+            results['parameter_optimization'] = optimization_results
+        
+        # Stage 3: Elite Validation (if elite dataset available)  
+        if use_elite_validation and self.datasets.get('elite') is not None:
+            print("\n🏆 STAGE 3: Elite Validation (Never-seen structures)")
+            print("-" * 50)
+            
+            X_elite, y_elite = self._prepare_dataset_features(self.datasets['elite'])
+            
+            elite_results = {}
+            source_results = results.get('parameter_optimization', results['foundation_results'])
+            
+            for model_name, model_data in source_results.items():
+                if isinstance(model_data, dict) and 'pipeline' in model_data:
+                    elite_scores = self._validate_kernel_on_elite(
+                        model_data['pipeline'], X_elite, y_elite, model_name
+                    )
+                    elite_results[model_name] = elite_scores
+            
+            results['elite_validation'] = elite_results
+        
+        # Kernel Analysis
+        results['kernel_analysis'] = self._analyze_kernel_performance(results)
+        
+        # Anti-memorization analysis
+        if len(results['foundation_results']) > 0:
+            results['anti_memorization_metrics'] = self._analyze_kernel_memorization(
+                results['foundation_results'], 
+                results.get('parameter_optimization', {}),
+                results.get('elite_validation', {})
+            )
+        
+        return results
+    
+    def _prepare_dataset_features(self, dataset_df):
+        """Prepare features for a specific dataset using same preprocessing as foundation"""
+        # Get numeric features only - EXCLUDE ENERGY-DERIVED FEATURES
+        exclude_cols = ['energy', 'energy_per_atom', 'filename', 'Unnamed: 0', 'structure_id']
+        feature_cols = [col for col in dataset_df.columns 
+                       if col not in exclude_cols and pd.api.types.is_numeric_dtype(dataset_df[col])]
+        
+        # Use only features that exist in both datasets
+        foundation_features = self.metadata.get('features', {}).get('feature_names', [])
+        basic_foundation_features = [f for f in foundation_features if 'soap' not in f.lower()]
+        
+        # Find common features
+        common_features = [f for f in feature_cols if f in basic_foundation_features]
+        
+        # Create feature matrix
+        X = dataset_df[common_features].fillna(dataset_df[common_features].mean())
+        y = dataset_df['energy']
+        
+        print(f"   📊 Prepared {len(X)} samples with {X.shape[1]} features")
+        return X, y
+    
+    def _optimize_kernel_parameters(self, X_hq, y_hq, foundation_results):
+        """Optimize kernel parameters using high-quality data"""
+        optimization_results = {}
+        
+        for model_name, model_data in foundation_results.items():
+            if model_name not in ['svr_rbf', 'kernel_ridge']:
+                continue  # Focus on kernel methods
+                
+            print(f"\n🔄 Optimizing {model_name} parameters...")
+            
+            # Enhanced parameter grids for kernel methods
+            if model_name == 'svr_rbf':
+                param_grid = {
+                    'model__C': [0.1, 1, 10, 100, 1000],
+                    'model__gamma': ['scale', 'auto', 0.001, 0.01, 0.1, 1],
+                    'model__epsilon': [0.01, 0.1, 0.2, 0.5]
+                }
+            elif model_name == 'kernel_ridge':
+                param_grid = {
+                    'model__alpha': [0.001, 0.01, 0.1, 1, 10],
+                    'model__gamma': [0.001, 0.01, 0.1, 1, 10]
+                }
+            
+            # Create pipeline
+            pipeline = self.create_pipeline(model_name, self.model_configs[model_name], X_hq.shape[1])
+            
+            # Grid search with cross-validation
+            grid_search = GridSearchCV(
+                pipeline, param_grid, cv=5, scoring='r2', n_jobs=-1, verbose=0
+            )
+            
+            # Fit
+            grid_search.fit(X_hq, y_hq)
+            
+            # Store results
+            optimization_results[model_name] = {
+                'pipeline': grid_search.best_estimator_,
+                'best_params': grid_search.best_params_,
+                'best_cv_score': grid_search.best_score_,
+                'param_grid_size': len(grid_search.cv_results_['params'])
+            }
+            
+            print(f"   ✅ Best CV R²: {grid_search.best_score_:.4f}")
+            print(f"   📋 Best params: {grid_search.best_params_}")
+        
+        return optimization_results
+    
+    def _validate_kernel_on_elite(self, pipeline, X_elite, y_elite, model_name):
+        """Validate optimized kernel on elite dataset"""
+        y_pred = pipeline.predict(X_elite)
+        
+        scores = {
+            'r2': r2_score(y_elite, y_pred),
+            'mse': mean_squared_error(y_elite, y_pred),
+            'mae': mean_absolute_error(y_elite, y_pred),
+            'predictions': y_pred,
+            'actuals': y_elite
+        }
+        
+        print(f"   🏆 {model_name}: Elite R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+        return scores
+    
+    def _analyze_kernel_performance(self, results):
+        """Analyze kernel-specific performance characteristics"""
+        analysis = {}
+        
+        # Compare kernel methods
+        kernel_methods = ['svr_rbf', 'kernel_ridge']
+        for method in kernel_methods:
+            method_analysis = {}
+            
+            # Foundation performance
+            if method in results.get('foundation_results', {}):
+                foundation_r2 = results['foundation_results'][method].get('test_r2', 0)
+                method_analysis['foundation_r2'] = foundation_r2
+            
+            # Parameter optimization impact
+            if method in results.get('parameter_optimization', {}):
+                opt_r2 = results['parameter_optimization'][method].get('best_cv_score', 0)
+                method_analysis['optimized_r2'] = opt_r2
+                method_analysis['optimization_gain'] = opt_r2 - method_analysis.get('foundation_r2', 0)
+            
+            # Elite performance
+            if method in results.get('elite_validation', {}):
+                elite_r2 = results['elite_validation'][method].get('r2', 0)
+                method_analysis['elite_r2'] = elite_r2
+            
+            analysis[method] = method_analysis
+        
+        return analysis
+    
+    def _analyze_kernel_memorization(self, foundation_results, optimization_results, elite_results):
+        """Analyze whether kernel methods are learning vs. memorizing"""
+        memorization_metrics = {}
+        
+        kernel_methods = ['svr_rbf', 'kernel_ridge']
+        for method in kernel_methods:
+            if method not in foundation_results:
+                continue
+                
+            metrics = {}
+            
+            # Foundation performance
+            foundation_r2 = foundation_results.get(method, {}).get('test_r2', 0)
+            metrics['foundation_r2'] = foundation_r2
+            
+            # Optimization performance
+            if method in optimization_results:
+                opt_r2 = optimization_results[method].get('best_cv_score', 0)
+                metrics['optimized_r2'] = opt_r2
+                metrics['optimization_improvement'] = opt_r2 - foundation_r2
+            
+            # Elite validation
+            if method in elite_results:
+                elite_r2 = elite_results[method].get('r2', 0)
+                metrics['elite_r2'] = elite_r2
+                metrics['generalization_gap'] = foundation_r2 - elite_r2
+                
+                # Kernel-specific memorization analysis
+                if metrics['generalization_gap'] > 0.15:  # Stricter for kernels
+                    metrics['memorization_risk'] = 'HIGH'
+                elif metrics['generalization_gap'] > 0.08:
+                    metrics['memorization_risk'] = 'MEDIUM'
+                else:
+                    metrics['memorization_risk'] = 'LOW'
+                
+                # Kernel complexity indicator
+                if method in optimization_results:
+                    best_params = optimization_results[method].get('best_params', {})
+                    if 'model__C' in best_params and best_params['model__C'] > 100:
+                        metrics['complexity_warning'] = 'High C parameter - potential overfitting'
+                    if 'model__gamma' in best_params and best_params['model__gamma'] > 1:
+                        metrics['complexity_warning'] = 'High gamma - potential overfitting'
+            
+            memorization_metrics[method] = metrics
+        
+        return memorization_metrics
+
     def train_models(self, X, y, test_size=0.2):
         """Train all models with comprehensive evaluation"""
         print("\n" + "="*70)
@@ -1218,8 +1488,8 @@ class ComprehensiveKernelAnalysis:
             sorted_indices = np.argsort(predictions)
             
             for rank, idx in enumerate(sorted_indices[:top_n], 1):
-                # Generate structure coordinates (simplified Au cluster)
-                coords_data = self._generate_structure_coordinates(idx, n_atoms=min(20, max(8, idx % 15 + 8)))
+                # Generate structure coordinates with exactly 20 atoms (matching original data)
+                coords_data = self._generate_structure_coordinates(idx, n_atoms=20)
                 
                 structure_data = {
                     'model_name': model_name,
@@ -1711,13 +1981,17 @@ class ComprehensiveKernelAnalysis:
             f.write(f"• Trained models: saved_models/\n")
 
 def main():
-    """Main execution with comprehensive analysis"""
+    """Main execution with enhanced hybrid kernel training"""
     print("="*80)
     print("🚀 ENHANCED KERNEL METHODS ANALYSIS")
-    print("   Complete Documentation Package")
+    print("   Complete Documentation Package with Hybrid Training")
     print("="*80)
     
     analyzer = ComprehensiveKernelAnalysis(random_state=42)
+    
+    # Ask user about training approach
+    training_mode = input("Choose training mode:\n1. Standard (999 structures only)\n2. Hybrid (999 + categorized datasets)\nEnter choice (1/2, default=2): ").strip()
+    use_hybrid = training_mode != '1'
     
     # Get data path
     data_path = input("\nEnter path to descriptors.csv (press Enter for default): ").strip()
@@ -1734,16 +2008,39 @@ def main():
     try:
         print(f"\n📂 Output directory: {output_dir}")
         
-        # Load and prepare data
-        X, y = analyzer.load_and_prepare_data(data_path)
+        # Load and prepare data with hybrid training support
+        X, y = analyzer.load_and_prepare_data(data_path, use_hybrid_training=use_hybrid)
         
-        # Generate learning curves first
-        learning_curve_data = analyzer.generate_learning_curves(X, y, output_dir)
+        # Choose training approach
+        if use_hybrid and any(df is not None for df in analyzer.datasets.values()):
+            print("\n🚀 Starting Progressive Kernel Training...")
+            results = analyzer.progressive_kernel_training(X, y, use_elite_validation=True)
+            
+            # Display kernel-specific memorization analysis
+            if results.get('anti_memorization_metrics'):
+                print("\n🧠 Kernel Anti-Memorization Analysis:")
+                print("-" * 50)
+                for model_name, metrics in results['anti_memorization_metrics'].items():
+                    risk = metrics.get('memorization_risk', 'UNKNOWN')
+                    gap = metrics.get('generalization_gap', 0)
+                    complexity_warning = metrics.get('complexity_warning', '')
+                    print(f"{model_name:15s}: Risk={risk:6s}, Gap={gap:+.4f}")
+                    if complexity_warning:
+                        print(f"                  Warning: {complexity_warning}")
+            
+            # Use foundation results for further analysis
+            analysis_results = results['foundation_results']
+        else:
+            print("\n📚 Using Standard Kernel Training (999 structures)...")
+            
+            # Generate learning curves first
+            learning_curve_data = analyzer.generate_learning_curves(X, y, output_dir)
+            
+            # Train models
+            analysis_results = analyzer.train_models(X, y)
+            results = analysis_results
         
-        # Train models
-        results = analyzer.train_models(X, y)
-        
-        # Find most balanced structures
+        # Find most balanced structures using the main results
         balanced_structures = analyzer.find_most_balanced_structures(top_n=10)
         
         # Perform statistical comparisons

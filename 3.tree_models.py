@@ -23,7 +23,8 @@ from scipy import stats
 # Core dependencies
 from sklearn.model_selection import (train_test_split, cross_val_score, GridSearchCV, 
                                    learning_curve, validation_curve)
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
+from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.inspection import permutation_importance
 
@@ -39,6 +40,12 @@ try:
     HAS_LIGHTGBM = True
 except ImportError:
     HAS_LIGHTGBM = False
+
+try:
+    import catboost as cb
+    HAS_CATBOOST = True
+except ImportError:
+    HAS_CATBOOST = False
 
 warnings.filterwarnings('ignore')
 
@@ -183,6 +190,96 @@ class EnhancedTreeAnalyzer:
             )
         else:
             logger.warning("LightGBM not available - skipping")
+        
+        if HAS_CATBOOST:
+            self.model_configs['catboost'] = ModelConfig(
+                name='catboost',
+                model_class=cb.CatBoostRegressor,
+                param_grid={
+                    'iterations': [200, 500],
+                    'depth': [4, 6, 8],
+                    'learning_rate': [0.05, 0.1],
+                    'l2_leaf_reg': [1, 3, 5],
+                    'bootstrap_type': ['Bernoulli', 'Bayesian'],
+                    'subsample': [0.8, 1.0]
+                },
+                is_available=True,
+                justification="""
+                CatBoost:
+                - Gradient boosting with advanced categorical handling
+                - Built-in overfitting detection and early stopping
+                - Robust to hyperparameters with good defaults
+                - Excellent performance on heterogeneous features
+                - GPU acceleration available
+                """
+            )
+        else:
+            logger.warning("CatBoost not available - skipping")
+        
+        # Add Extra Trees
+        self.model_configs['extra_trees'] = ModelConfig(
+            name='extra_trees',
+            model_class=ExtraTreesRegressor,
+            param_grid={
+                'n_estimators': [200, 500, 800],
+                'max_depth': [10, 20, None],
+                'min_samples_split': [2, 5, 10],
+                'max_features': ['sqrt', 'log2'],
+                'bootstrap': [True, False]
+            },
+            is_available=True,
+            justification="""
+            Extra Trees (Extremely Randomized Trees):
+            - More randomized than Random Forest for better generalization
+            - Faster training due to random threshold selection
+            - Reduced overfitting through extra randomization
+            - Good complement to Random Forest in ensembles
+            - Built-in feature importance
+            """
+        )
+        
+        # Add Gradient Boosting
+        self.model_configs['gradient_boosting'] = ModelConfig(
+            name='gradient_boosting',
+            model_class=GradientBoostingRegressor,
+            param_grid={
+                'n_estimators': [100, 200, 300],
+                'learning_rate': [0.05, 0.1, 0.15],
+                'max_depth': [3, 5, 7],
+                'subsample': [0.8, 0.9, 1.0],
+                'max_features': ['sqrt', 'log2']
+            },
+            is_available=True,
+            justification="""
+            Gradient Boosting:
+            - Sequential boosting with high predictive power
+            - Built-in regularization through learning rate
+            - Excellent for complex non-linear relationships
+            - Feature importance via gain and permutation
+            - Robust baseline before trying XGBoost/LightGBM
+            """
+        )
+        
+        # Add KNN (moved from kernel models)
+        self.model_configs['knn_stable'] = ModelConfig(
+            name='knn_stable',
+            model_class=KNeighborsRegressor,
+            param_grid={
+                'n_neighbors': [5, 10, 15, 20],
+                'weights': ['uniform', 'distance'],
+                'metric': ['euclidean', 'manhattan'],
+                'algorithm': ['auto', 'ball_tree', 'kd_tree']
+            },
+            is_available=True,
+            justification="""
+            K-Nearest Neighbors:
+            - Non-parametric method for complex decision boundaries
+            - Good for local patterns and irregular relationships
+            - No assumptions about data distribution
+            - Effective with sufficient data and proper scaling
+            - Interpretable through nearest neighbor analysis
+            """
+        )
     
     def validate_data(self, X: pd.DataFrame, y: pd.Series) -> None:
         """Comprehensive data validation"""
@@ -218,19 +315,72 @@ class EnhancedTreeAnalyzer:
         
         logger.info(f"Data validation passed: {X.shape[0]} samples, {X.shape[1]} features")
     
-    def load_data(self, data_path: str, target_column: str = 'energy') -> pd.DataFrame:
-        """Load and validate data from file path"""
-        logger.info(f"Loading data from {data_path}")
+    def load_data(self, data_path: str = None, target_column: str = 'energy', use_hybrid_training: bool = True) -> pd.DataFrame:
+        """
+        Enhanced data loading with hybrid training support for tree models
+        
+        Args:
+            data_path: Path to original descriptors.csv (999 structures)
+            target_column: Target variable name
+            use_hybrid_training: Whether to use progressive ensemble approach
+        """
+        logger.info("Enhanced tree models data loading with hybrid training support")
+        
+        # Load original 999 structures for foundation learning
+        if data_path is None:
+            data_path = "./au_cluster_analysis_results/descriptors.csv"
         
         try:
             if not Path(data_path).exists():
                 raise FileNotFoundError(f"Data file not found: {data_path}")
             
-            df = pd.read_csv(data_path)
-            logger.info(f"Loaded {len(df)} rows from {data_path}")
+            self.df_foundation = pd.read_csv(data_path)
+            logger.info(f"Loaded foundation data: {len(self.df_foundation)} rows from {data_path}")
             
-            if target_column not in df.columns:
-                raise DataValidationError(f"Target column '{target_column}' not found in data")
+            if target_column not in self.df_foundation.columns:
+                raise DataValidationError(f"Target column '{target_column}' not found in foundation data")
+            
+            # Load categorized high-quality datasets for tree ensembles
+            self.datasets = {}
+            dataset_files = {
+                'balanced': './improved_dataset_balanced.csv',
+                'high_quality': './improved_dataset_high_quality.csv', 
+                'elite': './improved_dataset_elite.csv'
+            }
+            
+            if use_hybrid_training:
+                print("🔄 Loading hybrid training datasets for tree ensembles...")
+                
+                for name, file_path in dataset_files.items():
+                    try:
+                        df = pd.read_csv(file_path)
+                        df = df.dropna(subset=[target_column])
+                        self.datasets[name] = df
+                        print(f"   ✅ {name}: {len(df)} structures")
+                        logger.info(f"Loaded {name} dataset: {len(df)} structures")
+                    except FileNotFoundError:
+                        print(f"   ⚠️  {name}: File not found - {file_path}")
+                        logger.warning(f"Dataset {name} not found: {file_path}")
+                        self.datasets[name] = None
+            
+            print(f"\n📊 Tree Models Dataset Summary:")
+            print(f"   Foundation (999): {len(self.df_foundation)} samples")
+            print(f"   Target range: {self.df_foundation[target_column].min():.2f} to {self.df_foundation[target_column].max():.2f}")
+            
+            if use_hybrid_training and any(df is not None for df in self.datasets.values()):
+                print(f"   Hybrid ensemble training: ENABLED")
+                for name, df in self.datasets.items():
+                    if df is not None:
+                        print(f"   - {name}: {len(df)} samples")
+            
+            return self.df_foundation
+            
+        except pd.errors.EmptyDataError:
+            raise DataValidationError(f"Data file is empty: {data_path}")
+        except pd.errors.ParserError as e:
+            raise DataValidationError(f"Failed to parse CSV file: {e}")
+        except Exception as e:
+            raise DataValidationError(f"Failed to load data: {e}")
             
             return df
             
@@ -358,6 +508,11 @@ class EnhancedTreeAnalyzer:
                 base_params.update({'eval_metric': 'rmse', 'verbosity': 0})
             elif config.name == 'lightgbm':
                 base_params.update({'verbose': -1})
+            elif config.name == 'catboost':
+                base_params.update({'verbose': False, 'random_seed': self.config.random_state})
+                base_params.pop('random_state', None)  # CatBoost uses random_seed
+            elif config.name == 'knn_stable':
+                base_params.pop('random_state', None)  # KNN doesn't use random_state
             
             model = config.model_class(**base_params)
             
@@ -514,6 +669,283 @@ class EnhancedTreeAnalyzer:
             logger.error(f"Feature importance extraction failed for {model_name}: {e}")
             return None
     
+    def progressive_ensemble_training(self, X_foundation: pd.DataFrame, y_foundation: pd.Series, use_elite_validation: bool = True) -> Dict[str, Dict]:
+        """
+        Progressive ensemble training: Foundation → Ensemble Refinement → Elite Validation
+        
+        Args:
+            X_foundation: Features from 999 structures
+            y_foundation: Targets from 999 structures
+            use_elite_validation: Whether to use elite dataset for final validation
+        
+        Returns:
+            dict: Comprehensive training results across all stages
+        """
+        print("\n" + "="*70)
+        print("🚀 PROGRESSIVE ENSEMBLE TRAINING PIPELINE")
+        print("="*70)
+        
+        results = {
+            'foundation_results': {},
+            'ensemble_refinement': {},
+            'elite_validation': {},
+            'ensemble_analysis': {},
+            'anti_memorization_metrics': {}
+        }
+        
+        # Stage 1: Foundation Learning (999 structures)
+        print("\n📚 STAGE 1: Foundation Ensemble Learning (999 structures)")
+        print("-" * 50)
+        
+        foundation_results = self.train_all_models(X_foundation, y_foundation)
+        results['foundation_results'] = foundation_results
+        
+        # Stage 2: Ensemble Refinement (if balanced dataset available)
+        if self.datasets.get('balanced') is not None:
+            print("\n🎯 STAGE 2: Ensemble Refinement (Balanced subset)")
+            print("-" * 50)
+            
+            # Prepare balanced data with same feature processing
+            X_balanced, y_balanced = self._prepare_tree_dataset_features(self.datasets['balanced'])
+            
+            # Refine ensemble with balanced data
+            refinement_results = self._refine_tree_ensembles(
+                X_balanced, y_balanced, foundation_results
+            )
+            results['ensemble_refinement'] = refinement_results
+        
+        # Stage 3: Elite Validation (if elite dataset available)  
+        if use_elite_validation and self.datasets.get('elite') is not None:
+            print("\n🏆 STAGE 3: Elite Validation (Never-seen structures)")
+            print("-" * 50)
+            
+            X_elite, y_elite = self._prepare_tree_dataset_features(self.datasets['elite'])
+            
+            elite_results = {}
+            source_results = results.get('ensemble_refinement', results['foundation_results'])
+            
+            for model_name, model_data in source_results.items():
+                if isinstance(model_data, dict) and model_data.get('status') == 'success':
+                    elite_scores = self._validate_ensemble_on_elite(
+                        model_data['model'], X_elite, y_elite, model_name
+                    )
+                    elite_results[model_name] = elite_scores
+            
+            results['elite_validation'] = elite_results
+        
+        # Ensemble Analysis
+        results['ensemble_analysis'] = self._analyze_ensemble_performance(results)
+        
+        # Anti-memorization analysis
+        if len(results['foundation_results']) > 0:
+            results['anti_memorization_metrics'] = self._analyze_ensemble_memorization(
+                results['foundation_results'], 
+                results.get('ensemble_refinement', {}),
+                results.get('elite_validation', {})
+            )
+        
+        return results
+    
+    def _prepare_tree_dataset_features(self, dataset_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
+        """Prepare features for tree models from a specific dataset"""
+        # Get numeric features only - EXCLUDE ENERGY-DERIVED FEATURES
+        exclude_cols = ['energy', 'energy_per_atom', 'filename', 'Unnamed: 0', 'structure_id']
+        feature_cols = [col for col in dataset_df.columns 
+                       if col not in exclude_cols and pd.api.types.is_numeric_dtype(dataset_df[col])]
+        
+        # Create feature matrix
+        X = dataset_df[feature_cols].fillna(dataset_df[feature_cols].mean())
+        y = dataset_df['energy']
+        
+        print(f"   📊 Prepared {len(X)} samples with {X.shape[1]} features for tree ensemble")
+        logger.info(f"Prepared tree dataset: {len(X)} samples, {X.shape[1]} features")
+        return X, y
+    
+    def _refine_tree_ensembles(self, X_balanced: pd.DataFrame, y_balanced: pd.Series, foundation_results: Dict) -> Dict:
+        """Refine tree ensembles using balanced dataset"""
+        refinement_results = {}
+        
+        # Focus on ensemble methods that benefit from balanced data
+        ensemble_methods = ['random_forest', 'extra_trees', 'gradient_boosting']
+        if HAS_XGBOOST:
+            ensemble_methods.append('xgboost')
+        if HAS_LIGHTGBM:
+            ensemble_methods.append('lightgbm')
+        if HAS_CATBOOST:
+            ensemble_methods.append('catboost')
+        
+        for model_name in ensemble_methods:
+            if model_name not in foundation_results or foundation_results[model_name].get('status') != 'success':
+                continue
+                
+            print(f"\n🔄 Refining {model_name} ensemble...")
+            logger.info(f"Refining {model_name} with balanced data")
+            
+            # Get model configuration
+            model_config = None
+            if model_name in self.model_configs:
+                model_config = self.model_configs[model_name]
+            
+            if model_config is None:
+                continue
+            
+            # Enhanced hyperparameters for balanced data
+            if model_name == 'random_forest':
+                # Reduce complexity for smaller dataset - modify param grid
+                param_grid = model_config.param_grid.copy()
+                if 'n_estimators' in param_grid:
+                    param_grid['n_estimators'] = [min(200, max(param_grid['n_estimators']))]
+                if 'max_depth' in param_grid:
+                    param_grid['max_depth'] = [min(15, max(param_grid['max_depth']))]
+            elif model_name == 'gradient_boosting':
+                # Stronger regularization for smaller dataset
+                param_grid = model_config.param_grid.copy()
+                if 'learning_rate' in param_grid:
+                    param_grid['learning_rate'] = [max(0.05, min(param_grid['learning_rate']))]
+                if 'n_estimators' in param_grid:
+                    param_grid['n_estimators'] = [min(150, max(param_grid['n_estimators']))]
+            else:
+                param_grid = model_config.param_grid
+            
+            # Train refined model
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_balanced, y_balanced, test_size=0.3, random_state=self.config.random_state
+            )
+            
+            try:
+                # Use default parameters for simpler training on smaller dataset
+                model = model_config.model_class()
+                model.fit(X_train, y_train)
+                
+                # Evaluate
+                y_pred = model.predict(X_test)
+                
+                scores = {
+                    'model': model,
+                    'r2': r2_score(y_test, y_pred),
+                    'mse': mean_squared_error(y_test, y_pred),
+                    'mae': mean_absolute_error(y_test, y_pred),
+                    'predictions': y_pred,
+                    'actuals': y_test,
+                    'status': 'success'
+                }
+                
+                refinement_results[model_name] = scores
+                print(f"   ✅ {model_name}: R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+                logger.info(f"Refined {model_name}: R² = {scores['r2']:.4f}")
+                
+            except Exception as e:
+                print(f"   ❌ {model_name}: Failed - {str(e)}")
+                logger.error(f"Failed to refine {model_name}: {e}")
+                refinement_results[model_name] = {'status': 'failed', 'error': str(e)}
+        
+        return refinement_results
+    
+    def _validate_ensemble_on_elite(self, model: Any, X_elite: pd.DataFrame, y_elite: pd.Series, model_name: str) -> Dict:
+        """Validate ensemble on elite dataset"""
+        try:
+            y_pred = model.predict(X_elite)
+            
+            scores = {
+                'r2': r2_score(y_elite, y_pred),
+                'mse': mean_squared_error(y_elite, y_pred),
+                'mae': mean_absolute_error(y_elite, y_pred),
+                'predictions': y_pred,
+                'actuals': y_elite,
+                'status': 'success'
+            }
+            
+            print(f"   🏆 {model_name}: Elite R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+            logger.info(f"Elite validation {model_name}: R² = {scores['r2']:.4f}")
+            return scores
+            
+        except Exception as e:
+            print(f"   ❌ {model_name}: Elite validation failed - {str(e)}")
+            logger.error(f"Elite validation failed for {model_name}: {e}")
+            return {'status': 'failed', 'error': str(e)}
+    
+    def _analyze_ensemble_performance(self, results: Dict) -> Dict:
+        """Analyze ensemble-specific performance characteristics"""
+        analysis = {}
+        
+        # Analyze ensemble methods
+        ensemble_methods = ['random_forest', 'extra_trees', 'gradient_boosting', 'xgboost', 'lightgbm', 'catboost']
+        
+        for method in ensemble_methods:
+            method_analysis = {}
+            
+            # Foundation performance
+            if method in results.get('foundation_results', {}):
+                foundation_data = results['foundation_results'][method]
+                if foundation_data.get('status') == 'success':
+                    method_analysis['foundation_r2'] = foundation_data.get('test_r2', 0)
+            
+            # Refinement impact
+            if method in results.get('ensemble_refinement', {}):
+                refinement_data = results['ensemble_refinement'][method]
+                if refinement_data.get('status') == 'success':
+                    refinement_r2 = refinement_data.get('r2', 0)
+                    method_analysis['refined_r2'] = refinement_r2
+                    foundation_r2 = method_analysis.get('foundation_r2', 0)
+                    method_analysis['refinement_gain'] = refinement_r2 - foundation_r2
+            
+            # Elite performance
+            if method in results.get('elite_validation', {}):
+                elite_data = results['elite_validation'][method]
+                if elite_data.get('status') == 'success':
+                    method_analysis['elite_r2'] = elite_data.get('r2', 0)
+            
+            if method_analysis:  # Only add if we have data
+                analysis[method] = method_analysis
+        
+        return analysis
+    
+    def _analyze_ensemble_memorization(self, foundation_results: Dict, refinement_results: Dict, elite_results: Dict) -> Dict:
+        """Analyze whether ensemble methods are learning vs. memorizing"""
+        memorization_metrics = {}
+        
+        ensemble_methods = ['random_forest', 'extra_trees', 'gradient_boosting', 'xgboost', 'lightgbm', 'catboost']
+        
+        for method in ensemble_methods:
+            if method not in foundation_results or foundation_results[method].get('status') != 'success':
+                continue
+                
+            metrics = {}
+            
+            # Foundation performance
+            foundation_r2 = foundation_results[method].get('test_r2', 0)
+            metrics['foundation_r2'] = foundation_r2
+            
+            # Refinement performance
+            if method in refinement_results and refinement_results[method].get('status') == 'success':
+                refined_r2 = refinement_results[method].get('r2', 0)
+                metrics['refined_r2'] = refined_r2
+                metrics['refinement_improvement'] = refined_r2 - foundation_r2
+            
+            # Elite validation
+            if method in elite_results and elite_results[method].get('status') == 'success':
+                elite_r2 = elite_results[method].get('r2', 0)
+                metrics['elite_r2'] = elite_r2
+                metrics['generalization_gap'] = foundation_r2 - elite_r2
+                
+                # Ensemble-specific memorization analysis (more lenient than linear models)
+                if metrics['generalization_gap'] > 0.2:  # Trees can be more complex
+                    metrics['memorization_risk'] = 'HIGH'
+                elif metrics['generalization_gap'] > 0.1:
+                    metrics['memorization_risk'] = 'MEDIUM'
+                else:
+                    metrics['memorization_risk'] = 'LOW'
+                
+                # Ensemble depth/complexity warnings
+                if hasattr(foundation_results[method].get('model'), 'max_depth'):
+                    max_depth = foundation_results[method]['model'].max_depth
+                    if max_depth and max_depth > 20:
+                        metrics['complexity_warning'] = f'Deep trees (depth={max_depth}) - potential overfitting'
+            
+            memorization_metrics[method] = metrics
+        
+        return memorization_metrics
+
     def train_all_models(self, X: pd.DataFrame, y: pd.Series) -> Dict[str, Dict]:
         """Train all available models with comprehensive analysis"""
         print("\n" + "="*60)
@@ -1663,8 +2095,8 @@ print("Tree-based model loaded successfully!")
             sorted_indices = np.argsort(predictions)
             
             for rank, idx in enumerate(sorted_indices[:top_n], 1):
-                # Generate structure coordinates (simplified Au cluster)
-                coords_data = self._generate_structure_coordinates(idx, n_atoms=min(20, max(8, idx % 15 + 8)))
+                # Generate structure coordinates with exactly 20 atoms (matching original data)
+                coords_data = self._generate_structure_coordinates(idx, n_atoms=20)
                 
                 structure_data = {
                     'model_name': model_name,
@@ -1937,11 +2369,15 @@ def run_tree_analysis(data_source, target_column: str = 'energy',
         raise
 
 def main():
-    """Interactive main function for command-line usage"""
+    """Interactive main function with enhanced hybrid ensemble training"""
     print("Enhanced Tree-Based Models for Au Cluster Analysis")
     print("=" * 55)
     
     try:
+        # Ask user about training approach
+        training_mode = input("Choose training mode:\n1. Standard (999 structures only)\n2. Hybrid (999 + progressive ensemble)\nEnter choice (1/2, default=2): ").strip()
+        use_hybrid = training_mode != '1'
+        
         # Get data path from user
         data_path = input("Enter path to descriptors.csv (press Enter for default): ").strip()
         
@@ -1954,8 +2390,63 @@ def main():
         if not output_dir:
             output_dir = "./tree_models_results"
         
-        # Run analysis
-        analyzer = run_tree_analysis(data_path, target_column='energy', output_dir=output_dir)
+        # Initialize analyzer
+        analyzer = EnhancedTreeAnalyzer()
+        
+        # Load data with hybrid training support
+        df = analyzer.load_data(data_path, use_hybrid_training=use_hybrid)
+        
+        # Prepare features
+        X, y = analyzer.prepare_features(df)
+        
+        # Choose training approach
+        if use_hybrid and any(df is not None for df in analyzer.datasets.values()):
+            print("\n🚀 Starting Progressive Ensemble Training...")
+            results = analyzer.progressive_ensemble_training(X, y, use_elite_validation=True)
+            
+            # Display ensemble-specific memorization analysis
+            if results.get('anti_memorization_metrics'):
+                print("\n🧠 Ensemble Anti-Memorization Analysis:")
+                print("-" * 50)
+                for model_name, metrics in results['anti_memorization_metrics'].items():
+                    risk = metrics.get('memorization_risk', 'UNKNOWN')
+                    gap = metrics.get('generalization_gap', 0)
+                    complexity_warning = metrics.get('complexity_warning', '')
+                    print(f"{model_name:15s}: Risk={risk:6s}, Gap={gap:+.4f}")
+                    if complexity_warning:
+                        print(f"                  Warning: {complexity_warning}")
+            
+            # Use foundation results for visualization and reporting
+            analyzer.results = results['foundation_results']
+            analyzer.predictions_df = pd.DataFrame()  # Will be populated during visualization
+        else:
+            print("\n📚 Using Standard Ensemble Training (999 structures)...")
+            results = analyzer.train_all_models(X, y)
+        
+        # Create output directory and visualizations
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Generate reports and visualizations
+        analyzer.create_combined_plots(output_path)
+        analyzer.create_individual_model_plots(output_path)
+        analyzer.create_comprehensive_analysis_report(output_path)
+        
+        # Display final results
+        if use_hybrid and 'elite_validation' in results and results['elite_validation']:
+            print(f"\n🎉 Hybrid Ensemble Training Complete!")
+            print(f"🏆 Elite Validation Results:")
+            for model, scores in results['elite_validation'].items():
+                if scores.get('status') == 'success':
+                    print(f"   {model:15s}: R² = {scores['r2']:.4f}, MSE = {scores['mse']:.4f}")
+        else:
+            print(f"\n🎉 Tree Models Analysis Complete!")
+            if hasattr(analyzer, 'results') and analyzer.results:
+                successful_models = [name for name, result in analyzer.results.items() 
+                                   if result.get('status') == 'success']
+                print(f"📈 Successfully trained {len(successful_models)} models")
+        
+        print(f"📁 Results saved to: {output_dir}")
         
         # Optional: Create PDF report
         create_pdf = input("\nCreate PDF report? (y/n, default: n): ").strip().lower()
