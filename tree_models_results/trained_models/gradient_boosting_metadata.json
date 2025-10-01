@@ -1,0 +1,59 @@
+{
+  "model_name": "gradient_boosting",
+  "model_type": "GradientBoostingRegressor",
+  "performance": {
+    "test_r2": 0.9104158548857988,
+    "test_rmse": 0.8469644713767202,
+    "test_mae": 0.56629180164584,
+    "cv_r2_mean": 0.902521019153024,
+    "cv_r2_std": 0.016213483393104144
+  },
+  "training_info": {
+    "train_samples": 799,
+    "test_samples": 200,
+    "features": 30,
+    "feature_names": [
+      "mean_bond_length",
+      "std_bond_length",
+      "n_bonds",
+      "mean_coordination",
+      "std_coordination",
+      "max_coordination",
+      "radius_of_gyration",
+      "asphericity",
+      "surface_fraction",
+      "x_range",
+      "y_range",
+      "z_range",
+      "anisotropy",
+      "compactness",
+      "bond_variance",
+      "soap_pc_1",
+      "soap_pc_2",
+      "soap_pc_3",
+      "soap_pc_4",
+      "soap_pc_5",
+      "soap_pc_6",
+      "soap_pc_7",
+      "soap_pc_8",
+      "soap_pc_9",
+      "soap_pc_10",
+      "soap_pc_11",
+      "soap_pc_12",
+      "soap_pc_13",
+      "soap_pc_14",
+      "soap_pc_15"
+    ]
+  },
+  "hyperparameters": {
+    "validation_fraction": 0.15,
+    "subsample": 0.9,
+    "n_estimators": 1500,
+    "min_samples_split": 3,
+    "min_samples_leaf": 2,
+    "max_features": "sqrt",
+    "max_depth": 6,
+    "learning_rate": 0.02,
+    "alpha": 0.9
+  }
+}

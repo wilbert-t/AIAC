@@ -154,9 +154,9 @@ class LinearModelsAnalyzer:
         # Load categorized high-quality datasets
         self.datasets = {}
         dataset_files = {
-            'balanced': './improved_dataset_balanced.csv',
-            'high_quality': './improved_dataset_high_quality.csv', 
-            'elite': './improved_dataset_elite.csv'
+            'balanced': './task2/improved_dataset_balanced.csv',
+            'high_quality': './task2/improved_dataset_high_quality.csv', 
+            'elite': './task2/improved_dataset_elite.csv'
         }
         
         if use_hybrid_training:
@@ -608,17 +608,90 @@ class LinearModelsAnalyzer:
             memorization_metrics[model_name] = metrics
         
         return memorization_metrics
+    
+    def _guaranteed_350_split(self, X, y, test_size=0.2):
+        """
+        Split data ensuring Structure 350.xyz is always in the test set
+        
+        Args:
+            X: Feature matrix with index matching original dataframe
+            y: Target vector with index matching original dataframe  
+            test_size: Proportion for test set
+            
+        Returns:
+            X_train, X_test, y_train, y_test with 350.xyz guaranteed in test
+        """
+        print("\n🎯 GUARANTEED STRUCTURE 350.XYZ HOLDOUT")
+        print("-" * 50)
+        
+        # Find Structure 350.xyz in the data
+        if hasattr(self, 'df') and 'filename' in self.df.columns:
+            # Find the index of Structure 350.xyz
+            structure_350_mask = self.df['filename'] == '350.xyz'
+            structure_350_indices = self.df[structure_350_mask].index
+            
+            if len(structure_350_indices) > 0:
+                structure_350_idx = structure_350_indices[0]
+                print(f"   ✅ Found Structure 350.xyz at index {structure_350_idx}")
+                print(f"   🎯 Energy: {self.df.loc[structure_350_idx, 'energy']:.5f} eV")
+                
+                # Ensure the index is in our X, y data
+                if structure_350_idx in X.index:
+                    # Remove 350.xyz from the pool for random splitting
+                    X_without_350 = X.drop(structure_350_idx)
+                    y_without_350 = y.drop(structure_350_idx)
+                    
+                    # Calculate how many more samples we need for test set
+                    total_samples = len(X)
+                    target_test_size = int(total_samples * test_size)
+                    remaining_test_size = max(0, target_test_size - 1)  # -1 because we already have 350.xyz
+                    
+                    if remaining_test_size > 0:
+                        # Random split the remaining data
+                        X_train_temp, X_test_temp, y_train_temp, y_test_temp = train_test_split(
+                            X_without_350, y_without_350, 
+                            test_size=remaining_test_size,
+                            random_state=self.random_state
+                        )
+                    else:
+                        # If test_size=1 structure, only use 350.xyz
+                        X_train_temp, X_test_temp = X_without_350, X.iloc[[]]
+                        y_train_temp, y_test_temp = y_without_350, y.iloc[[]]
+                    
+                    # Add Structure 350.xyz to test set
+                    X_test = pd.concat([X_test_temp, X.loc[[structure_350_idx]]])
+                    y_test = pd.concat([y_test_temp, y.loc[[structure_350_idx]]])
+                    X_train = X_train_temp
+                    y_train = y_train_temp
+                    
+                    print(f"   📊 Final split: Train={len(X_train)}, Test={len(X_test)} (includes 350.xyz)")
+                    print(f"   🎯 Structure 350.xyz guaranteed in test set!")
+                    
+                    return X_train, X_test, y_train, y_test
+                else:
+                    print(f"   ⚠️ Structure 350.xyz index {structure_350_idx} not found in feature matrix")
+            else:
+                print("   ⚠️ Structure 350.xyz not found in dataframe")
+        else:
+            print("   ⚠️ No filename column available for structure identification")
+        
+        # Fallback to regular random split
+        print("   🔄 Falling back to random split")
+        return train_test_split(X, y, test_size=test_size, random_state=self.random_state)
 
-    def train_models(self, X, y, test_size=0.2):
+    def train_models(self, X, y, test_size=0.2, guarantee_350_in_test=True):
         """Train all linear models with comprehensive analysis"""
         print("\n" + "="*60)
         print("TRAINING LINEAR & REGULARIZED MODELS")
         print("="*60)
         
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=self.random_state
-        )
+        # Split data with guaranteed Structure 350.xyz in test set
+        if guarantee_350_in_test:
+            X_train, X_test, y_train, y_test = self._guaranteed_350_split(X, y, test_size)
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=self.random_state
+            )
         
         self.X_train, self.X_test = X_train, X_test
         self.y_train, self.y_test = y_train, y_test

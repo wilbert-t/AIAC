@@ -2,15 +2,15 @@
   "model_name": "lasso",
   "model_type": "LassoCV",
   "performance": {
-    "test_r2": 0.7929248128914106,
-    "test_rmse": 1.2876968913170517,
-    "test_mae": 0.9468837669598497,
+    "test_r2": 0.7709968919548522,
+    "test_rmse": 1.3250499074413558,
+    "test_mae": 0.9395500149188439,
     "cv_r2_mean": 0.7982028731312342,
     "cv_r2_std": 0.023537276990402808
   },
   "training_info": {
-    "train_samples": 799,
-    "test_samples": 200,
+    "train_samples": 800,
+    "test_samples": 199,
     "features": 15,
     "feature_names": [
       "mean_bond_length",
@@ -31,6 +31,6 @@
     ]
   },
   "hyperparameters": {
-    "alpha": 0.003727593720314938
+    "alpha": 0.004498432668969444
   }
 }

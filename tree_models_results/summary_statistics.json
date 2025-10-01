@@ -1,0 +1,12 @@
+{
+  "best_model": "Xgboost",
+  "best_test_r2": 0.9156393502367332,
+  "best_test_rmse": 0.8219011234386684,
+  "best_test_mae": 0.5362390351171848,
+  "best_cv_r2_mean": 0.9038491677456226,
+  "best_cv_r2_std": 0.01739125469599103,
+  "training_samples": 799,
+  "test_samples": 200,
+  "total_features": 30,
+  "soap_features": 15
+}

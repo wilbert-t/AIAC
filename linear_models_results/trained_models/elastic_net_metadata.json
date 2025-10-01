@@ -2,15 +2,15 @@
   "model_name": "elastic_net",
   "model_type": "ElasticNetCV",
   "performance": {
-    "test_r2": 0.7929927209358624,
-    "test_rmse": 1.287485730942675,
-    "test_mae": 0.9475189380284632,
+    "test_r2": 0.7708823889447197,
+    "test_rmse": 1.3253811327323488,
+    "test_mae": 0.9409202851368069,
     "cv_r2_mean": 0.7977937748019375,
     "cv_r2_std": 0.023426213406334558
   },
   "training_info": {
-    "train_samples": 799,
-    "test_samples": 200,
+    "train_samples": 800,
+    "test_samples": 199,
     "features": 15,
     "feature_names": [
       "mean_bond_length",

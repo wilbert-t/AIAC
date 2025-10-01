@@ -1,0 +1,58 @@
+{
+  "model_name": "xgboost",
+  "model_type": "XGBRegressor",
+  "performance": {
+    "test_r2": 0.9156393502367332,
+    "test_rmse": 0.8219011234386684,
+    "test_mae": 0.5362390351171848,
+    "cv_r2_mean": 0.9038491677456226,
+    "cv_r2_std": 0.01739125469599103
+  },
+  "training_info": {
+    "train_samples": 799,
+    "test_samples": 200,
+    "features": 30,
+    "feature_names": [
+      "mean_bond_length",
+      "std_bond_length",
+      "n_bonds",
+      "mean_coordination",
+      "std_coordination",
+      "max_coordination",
+      "radius_of_gyration",
+      "asphericity",
+      "surface_fraction",
+      "x_range",
+      "y_range",
+      "z_range",
+      "anisotropy",
+      "compactness",
+      "bond_variance",
+      "soap_pc_1",
+      "soap_pc_2",
+      "soap_pc_3",
+      "soap_pc_4",
+      "soap_pc_5",
+      "soap_pc_6",
+      "soap_pc_7",
+      "soap_pc_8",
+      "soap_pc_9",
+      "soap_pc_10",
+      "soap_pc_11",
+      "soap_pc_12",
+      "soap_pc_13",
+      "soap_pc_14",
+      "soap_pc_15"
+    ]
+  },
+  "hyperparameters": {
+    "subsample": 0.7,
+    "reg_lambda": 3,
+    "reg_alpha": 1,
+    "n_estimators": 1200,
+    "max_depth": 6,
+    "learning_rate": 0.03,
+    "gamma": 0,
+    "colsample_bytree": 0.8
+  }
+}

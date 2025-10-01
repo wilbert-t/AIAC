@@ -1,12 +1,12 @@
 {
-  "best_model": "Elastic_Net",
-  "best_test_r2": 0.7929927209358624,
-  "best_test_rmse": 1.287485730942675,
-  "best_test_mae": 0.9475189380284632,
-  "best_cv_r2_mean": 0.7977937748019375,
-  "best_cv_r2_std": 0.023426213406334558,
-  "training_samples": 799,
-  "test_samples": 200,
+  "best_model": "Svr_Linear",
+  "best_test_r2": 0.7855095925813245,
+  "best_test_rmse": 1.2823763051959627,
+  "best_test_mae": 0.9312041526254403,
+  "best_cv_r2_mean": 0.7761423757312615,
+  "best_cv_r2_std": 0.032250647152822984,
+  "training_samples": 800,
+  "test_samples": 199,
   "total_features": 15,
   "soap_features": 0
 }

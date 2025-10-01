@@ -2,15 +2,15 @@
   "model_name": "ridge",
   "model_type": "RidgeCV",
   "performance": {
-    "test_r2": 0.7917757842756965,
-    "test_rmse": 1.2912645658234712,
-    "test_mae": 0.9505507925534835,
+    "test_r2": 0.7685921883114148,
+    "test_rmse": 1.3319887460221378,
+    "test_mae": 0.9393779670183883,
     "cv_r2_mean": 0.797650913114963,
     "cv_r2_std": 0.022597587110184378
   },
   "training_info": {
-    "train_samples": 799,
-    "test_samples": 200,
+    "train_samples": 800,
+    "test_samples": 199,
     "features": 15,
     "feature_names": [
       "mean_bond_length",
@@ -31,6 +31,6 @@
     ]
   },
   "hyperparameters": {
-    "alpha": 0.868511373751352
+    "alpha": 0.09102981779915217
   }
 }

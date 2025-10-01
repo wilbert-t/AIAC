@@ -2,15 +2,15 @@
   "model_name": "linear",
   "model_type": "LinearRegression",
   "performance": {
-    "test_r2": 0.791482520928183,
-    "test_rmse": 1.292173555510382,
-    "test_mae": 0.949205195597259,
+    "test_r2": 0.7684948371116452,
+    "test_rmse": 1.3322688944462555,
+    "test_mae": 0.9392293219340178,
     "cv_r2_mean": 0.7977791153727282,
     "cv_r2_std": 0.022677476078571974
   },
   "training_info": {
-    "train_samples": 799,
-    "test_samples": 200,
+    "train_samples": 800,
+    "test_samples": 199,
     "features": 15,
     "feature_names": [
       "mean_bond_length",

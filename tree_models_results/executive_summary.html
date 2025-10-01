@@ -1,0 +1,156 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tree-Based Models Analysis - Executive Summary</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+        .header { background-color: #f4f4f4; padding: 20px; border-radius: 5px; }
+        .section { margin: 30px 0; }
+        .metrics { display: flex; flex-wrap: wrap; gap: 20px; }
+        .metric-card { background-color: #e8f4fd; padding: 15px; border-radius: 5px; min-width: 200px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .best-model { background-color: #d4edda; }
+        .recommendation { background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌳 Tree-Based Models Analysis - Executive Summary</h1>
+        <p><strong>Generated:</strong> 2025-10-01 23:43:04</p>
+        <p><strong>Dataset:</strong> Au Cluster Energy Prediction</p>
+    </div>
+    
+    <div class="section">
+        <h2>📊 Key Performance Metrics</h2>
+        <div class="metrics">
+            <div class="metric-card">
+                <h3>🏆 Best Model</h3>
+                <p><strong>Xgboost</strong></p>
+                <p>Test R²: 0.9156</p>
+            </div>
+            <div class="metric-card">
+                <h3>📈 Performance</h3>
+                <p>RMSE: 0.8219</p>
+                <p>MAE: 0.5362</p>
+            </div>
+            <div class="metric-card">
+                <h3>🎯 Cross-Validation</h3>
+                <p>CV R²: 0.9038 ± 0.0174</p>
+            </div>
+            <div class="metric-card">
+                <h3>📋 Dataset Info</h3>
+                <p>Training: 799 samples</p>
+                <p>Test: 200 samples</p>
+                <p>Features: 30</p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🏆 Model Performance Ranking</h2>
+        <table>
+            <tr>
+                <th>Rank</th>
+                <th>Model</th>
+                <th>Test R²</th>
+                <th>Test RMSE</th>
+                <th>Test MAE</th>
+                <th>CV R² (Mean ± Std)</th>
+                <th>Model Type</th>
+            </tr>
+            <tr class="best-model">
+                <td>1</td>
+                <td><strong>Xgboost</strong></td>
+                <td>0.9156</td>
+                <td>0.8219</td>
+                <td>0.5362</td>
+                <td>0.9038 ± 0.0174</td>
+                <td>Gradient Boosting</td>
+            </tr>
+            <tr class="">
+                <td>2</td>
+                <td><strong>Gradient Boosting</strong></td>
+                <td>0.9104</td>
+                <td>0.8470</td>
+                <td>0.5663</td>
+                <td>0.9025 ± 0.0162</td>
+                <td>Tree-Based</td>
+            </tr>
+            <tr class="">
+                <td>3</td>
+                <td><strong>Lightgbm</strong></td>
+                <td>0.9014</td>
+                <td>0.8887</td>
+                <td>0.6042</td>
+                <td>0.9054 ± 0.0123</td>
+                <td>Gradient Boosting (Fast)</td>
+            </tr>
+            <tr class="">
+                <td>4</td>
+                <td><strong>Extra Trees</strong></td>
+                <td>0.8799</td>
+                <td>0.9807</td>
+                <td>0.6682</td>
+                <td>0.8694 ± 0.0227</td>
+                <td>Tree-Based</td>
+            </tr>
+            <tr class="">
+                <td>5</td>
+                <td><strong>Random Forest</strong></td>
+                <td>0.8577</td>
+                <td>1.0673</td>
+                <td>0.7336</td>
+                <td>0.8489 ± 0.0268</td>
+                <td>Ensemble (Bagging)</td>
+            </tr>
+            <tr class="">
+                <td>6</td>
+                <td><strong>Knn Stable</strong></td>
+                <td>0.8093</td>
+                <td>1.2359</td>
+                <td>0.8514</td>
+                <td>0.8015 ± 0.0298</td>
+                <td>Tree-Based</td>
+            </tr>
+        </table>
+    </div>
+    
+    <div class="section">
+        <h2>💡 Key Insights & Recommendations</h2>
+        <div class="recommendation"><p><strong>•</strong> The Xgboost model achieved the highest performance with R² = 0.9156, explaining 91.6% of the variance in Au cluster energies.</p><p><strong>•</strong> Significant performance differences observed (ΔR² = 0.1064), indicating that the choice of tree-based algorithm significantly impacts Au cluster energy prediction.</p><p><strong>•</strong> Feature importance analysis identifies 'soap_pc_2' as the most critical predictor across tree-based models, suggesting its fundamental role in Au cluster stability.</p><p><strong>•</strong> The Lightgbm model shows the most stable performance across cross-validation folds, indicating robust generalization capability.</p><p><strong>•</strong> The Xgboost model demonstrates excellent generalization with minimal overfitting (gap: 0.084).</p>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>🔬 Technical Analysis</h2><p><strong>Random Forest:</strong> Residuals are slightly biased (mean residual: -0.0362) and non-normally distributed (Shapiro-Wilk p = 0.0000).</p><p><strong>Xgboost:</strong> Residuals are slightly biased (mean residual: -0.1165) and non-normally distributed (Shapiro-Wilk p = 0.0000).</p><p><strong>Lightgbm:</strong> Residuals are slightly biased (mean residual: -0.0217) and non-normally distributed (Shapiro-Wilk p = 0.0000).</p><p><strong>Extra Trees:</strong> Residuals are slightly biased (mean residual: -0.0181) and non-normally distributed (Shapiro-Wilk p = 0.0000).</p><p><strong>Gradient Boosting:</strong> Residuals are slightly biased (mean residual: -0.0864) and non-normally distributed (Shapiro-Wilk p = 0.0000).</p><p><strong>Knn Stable:</strong> Residuals are slightly biased (mean residual: 0.1918) and non-normally distributed (Shapiro-Wilk p = 0.0000).</p><p>Feature analysis: 15 structural descriptors and 15 SOAP descriptors were used for tree-based model training.</p><p><strong>Random Forest learning curve:</strong> Model appears slightly overfitted (train-validation gap: 0.1212).</p><p><strong>Xgboost learning curve:</strong> Model appears slightly overfitted (train-validation gap: 0.0962).</p><p><strong>Lightgbm learning curve:</strong> Model appears slightly overfitted (train-validation gap: 0.0946).</p><p><strong>Extra Trees learning curve:</strong> Model appears slightly overfitted (train-validation gap: 0.1301).</p><p><strong>Gradient Boosting learning curve:</strong> Model appears slightly overfitted (train-validation gap: 0.0968).</p><p><strong>Knn Stable learning curve:</strong> Model appears overfitted (train-validation gap: 0.1985).</p>
+    </div>
+    
+    <div class="section">
+        <h2>📁 Generated Files</h2>
+        <ul>
+            <li><strong>model_performance_comparison.csv:</strong> Detailed performance metrics</li>
+            <li><strong>all_predictions.csv:</strong> Predictions from all models</li>
+            <li><strong>feature_importance files:</strong> Feature importance analysis per model</li>
+            <li><strong>Individual model folders:</strong> Detailed plots for each model</li>
+            <li><strong>Combined analysis plots:</strong> Cross-model comparisons</li>
+            <li><strong>Trained models:</strong> Saved as .joblib files</li>
+        </ul>
+    </div>
+    
+    <div class="section">
+        <h2>🚀 Next Steps</h2>
+        <ol>
+            <li><strong>Production Deployment:</strong> Use the {summary_stats['best_model']} model for predictions</li>
+            <li><strong>Feature Analysis:</strong> Investigate top-performing features for physicochemical insights</li>
+            <li><strong>Model Validation:</strong> Test on additional Au cluster configurations</li>
+            <li><strong>Hyperparameter Optimization:</strong> Fine-tune the best performing model further</li>
+            <li><strong>Ensemble Methods:</strong> Consider combining top 2-3 models for improved predictions</li>
+            <li><strong>SHAP Analysis:</strong> Apply SHAP values for detailed feature attribution</li>
+        </ol>
+    </div>
+    
+</body>
+</html>
