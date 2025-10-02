@@ -1,0 +1,10 @@
+{
+  "timestamp": "2025-10-02T20:00:17.852785",
+  "n_atoms_perturbed": 1,
+  "perturbation_strength": 2,
+  "n_trials": 15,
+  "reference_energy": -1555.4057911442187,
+  "models_evaluated": [
+    "xgboost"
+  ]
+}

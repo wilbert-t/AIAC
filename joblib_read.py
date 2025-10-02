@@ -38,4 +38,4 @@ def inspect_joblib(path):
     return obj
 
 # 👉 Replace with your actual filename:
-my_obj = inspect_joblib("/Users/wilbert/Documents/GitHub/AIAC/linear_models_results/elastic_net_model.joblib")
+my_obj = inspect_joblib("/Users/wilbert/Documents/GitHub/AIAC/tree_models_results/trained_models/xgboost_model.joblib")
