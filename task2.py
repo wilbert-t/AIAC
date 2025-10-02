@@ -874,14 +874,24 @@ def create_family_visualization(families, task2_dir):
         axes[1,0].grid(True, alpha=0.3)
     
     # Plot 4: Energy landscape with family coloring
+    # Create mapping for family names to descriptive labels
+    family_labels = {
+        'Family_1': 'Family 1 = Pyramid',
+        'Family_2': 'Family 2 = Star Shape Oblate', 
+        'Family_3': 'Family 3 = Abstract'
+    }
+    
     for family_name, members in families.items():
         ranks = list(range(len(members)))  # Approximate ranking within top 20
         energies = [m['energy'] for m in members]
         
+        # Use descriptive label if available, otherwise use original name
+        display_label = family_labels.get(family_name, family_name) if len(members) > 1 else None
+        
         axes[1,1].scatter(ranks, energies,
                          c=[family_colors[family_name]], 
                          s=100, alpha=0.7,
-                         label=family_name if len(members) > 1 else None)
+                         label=display_label)
     
     axes[1,1].set_xlabel('Approximate Rank')
     axes[1,1].set_ylabel('Energy (eV)')
@@ -996,11 +1006,11 @@ def analyze_elite_top_10_structures(analyzer, elite_structures):
         
         print(f"\n🔄 SYMMETRY ANALYSIS:")
         if sphericity > 0.8:
-            shape_desc = "Nearly spherical (highly symmetric)"
+            shape_desc = "tetrahedron (highly symmetric)"
         elif sphericity > 0.5:
-            shape_desc = "Moderately spherical"
+            shape_desc = "icosahedron-like (moderately symmetric)"
         elif oblate_prolate > 0.5:
-            shape_desc = "Oblate (flattened sphere)"
+            shape_desc = "star shape (oblate)"
         elif oblate_prolate < -0.5:
             shape_desc = "Prolate (elongated)"
         else:

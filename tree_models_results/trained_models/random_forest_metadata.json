@@ -2,11 +2,11 @@
   "model_name": "random_forest",
   "model_type": "RandomForestRegressor",
   "performance": {
-    "test_r2": 0.8577432051379852,
-    "test_rmse": 1.0672990571949226,
-    "test_mae": 0.7335543613708125,
-    "cv_r2_mean": 0.8488576609192944,
-    "cv_r2_std": 0.02682594089714533
+    "test_r2": 0.857743205137985,
+    "test_rmse": 1.0672990571949237,
+    "test_mae": 0.7335543613708194,
+    "cv_r2_mean": 0.8488576609192965,
+    "cv_r2_std": 0.026825940897142603
   },
   "training_info": {
     "train_samples": 799,

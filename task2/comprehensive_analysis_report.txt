@@ -23,16 +23,16 @@ Average energy gap (top 50): 0.036140 eV
 --------------------------------------------------
 Rank | Structure | Energy (eV)  | ΔE (eV) | Bonds | Shape
 --------------------------------------------------
-   1 | 350.xyz   | -1557.209460 | 0.000000 |    60 | Nearly spherical (highly symmetric)
-   2 | 351.xyz   | -1557.196241 | 0.013219 |    60 | Nearly spherical (highly symmetric)
-   3 | 804.xyz   | -1556.299794 | 0.909666 |    61 | Moderately spherical
-   4 | 316.xyz   | -1555.942377 | 1.267083 |    54 | Oblate (flattened sphere)
-   5 | 952.xyz   | -1555.942376 | 1.267084 |    54 | Oblate (flattened sphere)
-   6 | 918.xyz   | -1555.942374 | 1.267086 |    54 | Oblate (flattened sphere)
-   7 | 934.xyz   | -1555.942374 | 1.267086 |    54 | Oblate (flattened sphere)
-   8 | 315.xyz   | -1555.942373 | 1.267087 |    54 | Oblate (flattened sphere)
-   9 | 958.xyz   | -1555.942367 | 1.267093 |    54 | Oblate (flattened sphere)
-  10 | 959.xyz   | -1555.942366 | 1.267094 |    54 | Oblate (flattened sphere)
+   1 | 350.xyz   | -1557.209460 | 0.000000 |    60 | tetrahedron (highly symmetric)
+   2 | 351.xyz   | -1557.196241 | 0.013219 |    60 | tetrahedron (highly symmetric)
+   3 | 804.xyz   | -1556.299794 | 0.909666 |    61 | icosahedron-like (moderately symmetric)
+   4 | 316.xyz   | -1555.942377 | 1.267083 |    54 | star shape (oblate)
+   5 | 952.xyz   | -1555.942376 | 1.267084 |    54 | star shape (oblate)
+   6 | 918.xyz   | -1555.942374 | 1.267086 |    54 | star shape (oblate)
+   7 | 934.xyz   | -1555.942374 | 1.267086 |    54 | star shape (oblate)
+   8 | 315.xyz   | -1555.942373 | 1.267087 |    54 | star shape (oblate)
+   9 | 958.xyz   | -1555.942367 | 1.267093 |    54 | star shape (oblate)
+  10 | 959.xyz   | -1555.942366 | 1.267094 |    54 | star shape (oblate)
 
 👨‍👩‍👧‍👦 STRUCTURE FAMILIES
 --------------------------------------------------

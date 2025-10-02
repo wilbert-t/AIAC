@@ -2,11 +2,11 @@
   "model_name": "extra_trees",
   "model_type": "ExtraTreesRegressor",
   "performance": {
-    "test_r2": 0.879891279459436,
-    "test_rmse": 0.9807016056694013,
-    "test_mae": 0.6682065052744189,
-    "cv_r2_mean": 0.8693521195610417,
-    "cv_r2_std": 0.02267970399637903
+    "test_r2": 0.8798912794594385,
+    "test_rmse": 0.9807016056693915,
+    "test_mae": 0.6682065052743985,
+    "cv_r2_mean": 0.8693521195610392,
+    "cv_r2_std": 0.02267970399637987
   },
   "training_info": {
     "train_samples": 799,

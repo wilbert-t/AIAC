@@ -21,8 +21,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from scipy import stats
 
 # Core dependencies
-from sklearn.model_selection import (train_test_split, cross_val_score, GridSearchCV, 
-                                   learning_curve, validation_curve)
+from sklearn.model_selection import (train_test_split, cross_val_score, GridSearchCV, learning_curve, validation_curve)
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -362,9 +361,9 @@ class EnhancedTreeAnalyzer:
             # Load categorized high-quality datasets for tree ensembles
             self.datasets = {}
             dataset_files = {
-                'balanced': './task2/improved_dataset_balanced.csv',
-                'high_quality': './task2/improved_dataset_high_quality.csv', 
-                'elite': './task2/improved_dataset_elite.csv'
+                'balanced': './task2/dataset_balanced.csv',
+                'high_quality': './task2/dataset_high_quality.csv', 
+                'elite': './task2/dataset_elite.csv'
             }
             
             if use_hybrid_training:

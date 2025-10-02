@@ -1,11 +1,11 @@
 Rank,Structure_ID,Energy_eV,Energy_vs_Best_eV,Bonds,Avg_Bond_Length_A,Sphericity,Shape_Description,Cluster_Radius_A,Family
-1,350.xyz,-1557.20946,0.0,60,2.666,1.0,Nearly spherical (highly symmetric),4.807,Family_1
-2,351.xyz,-1557.196241,0.013219,60,2.67,0.995,Nearly spherical (highly symmetric),4.806,Family_1
-3,804.xyz,-1556.299794,0.909666,61,2.693,0.682,Moderately spherical,4.717,Unique_804.xyz
-4,316.xyz,-1555.942377,1.267083,54,2.66,0.343,Oblate (flattened sphere),4.088,Family_2
-5,952.xyz,-1555.942376,1.267084,54,2.66,0.343,Oblate (flattened sphere),4.088,Family_2
-6,918.xyz,-1555.942374,1.267086,54,2.66,0.343,Oblate (flattened sphere),4.088,Family_2
-7,934.xyz,-1555.942374,1.267086,54,2.66,0.342,Oblate (flattened sphere),4.088,Family_2
-8,315.xyz,-1555.942373,1.267087,54,2.66,0.342,Oblate (flattened sphere),4.088,Family_2
-9,958.xyz,-1555.942367,1.267093,54,2.66,0.343,Oblate (flattened sphere),4.088,Family_2
-10,959.xyz,-1555.942366,1.267094,54,2.66,0.342,Oblate (flattened sphere),4.088,Family_2
+1,350.xyz,-1557.20946,0.0,60,2.666,1.0,tetrahedron (highly symmetric),4.807,Family_1
+2,351.xyz,-1557.196241,0.013219,60,2.67,0.995,tetrahedron (highly symmetric),4.806,Family_1
+3,804.xyz,-1556.299794,0.909666,61,2.693,0.682,icosahedron-like (moderately symmetric),4.717,Unique_804.xyz
+4,316.xyz,-1555.942377,1.267083,54,2.66,0.343,star shape (oblate),4.088,Family_2
+5,952.xyz,-1555.942376,1.267084,54,2.66,0.343,star shape (oblate),4.088,Family_2
+6,918.xyz,-1555.942374,1.267086,54,2.66,0.343,star shape (oblate),4.088,Family_2
+7,934.xyz,-1555.942374,1.267086,54,2.66,0.342,star shape (oblate),4.088,Family_2
+8,315.xyz,-1555.942373,1.267087,54,2.66,0.342,star shape (oblate),4.088,Family_2
+9,958.xyz,-1555.942367,1.267093,54,2.66,0.343,star shape (oblate),4.088,Family_2
+10,959.xyz,-1555.942366,1.267094,54,2.66,0.342,star shape (oblate),4.088,Family_2
