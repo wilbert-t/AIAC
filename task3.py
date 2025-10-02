@@ -7,6 +7,7 @@ Tests model robustness by applying controlled atomic displacements
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from pathlib import Path
 import joblib
 import json
@@ -885,6 +886,83 @@ class PerturbationAnalyzer:
         plt.savefig(self.output_dir / filename, dpi=300, bbox_inches='tight')
         plt.close()
     
+    def create_structure_visualization(self, structure_before: np.ndarray, 
+                                     structure_after: np.ndarray, 
+                                     perturbation_info: Dict,
+                                     structure_id: str,
+                                     output_dir: Path) -> str:
+        """Create 3D before/after visualization of atomic perturbation"""
+        
+        fig = plt.figure(figsize=(15, 6))
+        
+        # Before perturbation
+        ax1 = fig.add_subplot(121, projection='3d')
+        x, y, z = structure_before.T
+        ax1.scatter(x, y, z, c='gold', s=100, alpha=0.8, label='Au atoms')
+        ax1.set_title(f'Before Perturbation\n{structure_id}', fontsize=12, fontweight='bold')
+        ax1.set_xlabel('X (Å)')
+        ax1.set_ylabel('Y (Å)')
+        ax1.set_zlabel('Z (Å)')
+        
+        # Make axes equal
+        max_range = np.array([x.max()-x.min(), y.max()-y.min(), z.max()-z.min()]).max() / 2.0
+        mid_x = (x.max()+x.min()) * 0.5
+        mid_y = (y.max()+y.min()) * 0.5
+        mid_z = (z.max()+z.min()) * 0.5
+        ax1.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax1.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax1.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        # After perturbation
+        ax2 = fig.add_subplot(122, projection='3d')
+        x, y, z = structure_after.T
+        
+        # Color-code: perturbed atoms in red, others in gold
+        colors = ['red' if i in perturbation_info['perturbed_atoms'] else 'gold' 
+                  for i in range(len(structure_after))]
+        sizes = [150 if i in perturbation_info['perturbed_atoms'] else 100 
+                 for i in range(len(structure_after))]
+        
+        ax2.scatter(x, y, z, c=colors, s=sizes, alpha=0.8)
+        ax2.set_title(f'After Perturbation\n{perturbation_info["n_atoms_perturbed"]} atoms, '
+                      f'strength {perturbation_info["perturbation_strength"]}/10\n'
+                      f'Max displacement: {perturbation_info["max_displacement"]:.3f} Å', 
+                      fontsize=12, fontweight='bold')
+        ax2.set_xlabel('X (Å)')
+        ax2.set_ylabel('Y (Å)')
+        ax2.set_zlabel('Z (Å)')
+        
+        # Make axes equal
+        ax2.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax2.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax2.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        # Add displacement vectors
+        for atom_idx, displacement in zip(perturbation_info['perturbed_atoms'], 
+                                         perturbation_info['displacements']):
+            start = structure_before[atom_idx]
+            end = structure_after[atom_idx]
+            ax2.quiver(start[0], start[1], start[2],
+                      displacement[0], displacement[1], displacement[2],
+                      color='blue', arrow_length_ratio=0.3, linewidth=2, alpha=0.8)
+        
+        # Add legend
+        from matplotlib.lines import Line2D
+        legend_elements = [Line2D([0], [0], marker='o', color='w', markerfacecolor='gold', 
+                                markersize=10, label='Unperturbed Au', alpha=0.8),
+                          Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
+                                markersize=12, label='Perturbed Au', alpha=0.8),
+                          Line2D([0], [0], color='blue', linewidth=2, 
+                                label='Displacement', alpha=0.8)]
+        ax2.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.3, 1))
+        
+        plt.tight_layout()
+        filename = f'structure_perturbation_{structure_id.replace(".xyz", "")}.png'
+        plt.savefig(output_dir / filename, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        return filename
+    
     def calculate_model_agreement(self) -> Dict:
         """Calculate agreement metrics between models"""
         model_types = [col.replace('_perturbed_energy', '') 
@@ -937,6 +1015,227 @@ class PerturbationAnalyzer:
             )[0].tolist()
         
         return agreement_metrics
+
+    def select_representative_structures(self, all_results: pd.DataFrame) -> Dict:
+        """Select one representative structure from each category"""
+        
+        if len(all_results) == 0:
+            raise ValueError("No results available for structure selection")
+        
+        # Sort by energy (stability)
+        sorted_by_energy = all_results.sort_values('reference_energy')
+        
+        # Sort by sensitivity (robustness)
+        sorted_by_sensitivity = all_results.sort_values('mean_sensitivity')
+        
+        representatives = {
+            'most_stable': {
+                'id': sorted_by_energy.iloc[0]['structure_id'],
+                'energy': sorted_by_energy.iloc[0]['reference_energy'],
+                'sensitivity': sorted_by_energy.iloc[0]['mean_sensitivity'],
+                'description': 'Lowest energy structure (thermodynamically most stable)'
+            },
+            'most_robust': {
+                'id': sorted_by_sensitivity.iloc[0]['structure_id'],
+                'energy': sorted_by_sensitivity.iloc[0]['reference_energy'], 
+                'sensitivity': sorted_by_sensitivity.iloc[0]['mean_sensitivity'],
+                'description': 'Lowest sensitivity to perturbations (most robust)'
+            },
+            'most_sensitive': {
+                'id': sorted_by_sensitivity.iloc[-1]['structure_id'],
+                'energy': sorted_by_sensitivity.iloc[-1]['reference_energy'],
+                'sensitivity': sorted_by_sensitivity.iloc[-1]['mean_sensitivity'],
+                'description': 'Highest sensitivity to perturbations (least robust)'
+            }
+        }
+        
+        # Ensure we don't have duplicates - if structures are the same, pick alternatives
+        structure_ids = [rep['id'] for rep in representatives.values()]
+        if len(set(structure_ids)) < len(structure_ids):
+            # Handle duplicates by picking from different quartiles
+            n_structures = len(sorted_by_sensitivity)
+            representatives['most_robust']['id'] = sorted_by_sensitivity.iloc[0]['structure_id']
+            representatives['most_sensitive']['id'] = sorted_by_sensitivity.iloc[-1]['structure_id']
+            
+            # For most stable, pick from middle of sensitivity range if it's the same as others
+            middle_idx = n_structures // 2
+            if representatives['most_stable']['id'] in [representatives['most_robust']['id'], 
+                                                      representatives['most_sensitive']['id']]:
+                representatives['most_stable'] = {
+                    'id': sorted_by_sensitivity.iloc[middle_idx]['structure_id'],
+                    'energy': sorted_by_sensitivity.iloc[middle_idx]['reference_energy'],
+                    'sensitivity': sorted_by_sensitivity.iloc[middle_idx]['mean_sensitivity'],
+                    'description': 'Moderate sensitivity (balanced structure)'
+                }
+        
+        return representatives
+
+    def create_representative_visualizations(self, representatives: Dict, 
+                                           n_atoms: int = 2, 
+                                           strength: int = 5) -> Dict[str, str]:
+        """Create visualizations for representative structures from each category"""
+        
+        print(f"\n🎨 CREATING REPRESENTATIVE STRUCTURE VISUALIZATIONS")
+        print("=" * 60)
+        
+        viz_output_dir = self.output_dir / 'representative_visualizations'
+        viz_output_dir.mkdir(exist_ok=True)
+        
+        visualization_files = {}
+        
+        for category, structure_info in representatives.items():
+            print(f"\n📊 Creating visualization for {category}:")
+            print(f"   Structure: {structure_info['id']}")
+            print(f"   Energy: {structure_info['energy']:.6f} eV")
+            print(f"   Sensitivity: {structure_info['sensitivity']:.4f} eV/Å")
+            print(f"   Description: {structure_info['description']}")
+            
+            try:
+                # Load the specific structure coordinates
+                structure_coords = self._load_structure_coordinates(structure_info['id'])
+                
+                # Create temporary perturbator for this structure
+                temp_perturbator = StructurePerturbation(structure_coords, structure_info['id'])
+                
+                # Generate one perturbation for visualization (reproducible)
+                perturbed_structure, perturbation_info = temp_perturbator.perturb_structure(
+                    n_atoms_to_perturb=n_atoms,
+                    perturbation_strength=strength,
+                    seed=42  # Reproducible
+                )
+                
+                # Create 3D visualization
+                filename = self.create_structure_visualization(
+                    structure_before=structure_coords,
+                    structure_after=perturbed_structure,
+                    perturbation_info=perturbation_info,
+                    structure_id=structure_info['id'],
+                    output_dir=viz_output_dir
+                )
+                
+                visualization_files[category] = filename
+                print(f"   ✅ Saved: {filename}")
+                
+            except Exception as e:
+                print(f"   ❌ Failed to create visualization: {e}")
+                visualization_files[category] = None
+        
+        # Create summary document
+        self._create_visualization_summary(representatives, visualization_files, 
+                                         viz_output_dir, n_atoms, strength)
+        
+        print(f"\n🎉 Representative visualizations complete!")
+        print(f"📁 Saved to: {viz_output_dir}")
+        
+        return visualization_files
+
+    def _load_structure_coordinates(self, structure_id: str) -> np.ndarray:
+        """Load coordinates for a specific structure ID"""
+        
+        # Handle different structure ID formats
+        # Convert 'structure_729' to '729.xyz' or keep '729.xyz' as is
+        if structure_id.startswith('structure_'):
+            # Extract number from 'structure_729' -> '729'
+            number = structure_id.replace('structure_', '')
+            xyz_filename = f"{number}.xyz"
+        elif structure_id.endswith('.xyz'):
+            xyz_filename = structure_id
+        else:
+            # Assume it's just a number
+            xyz_filename = f"{structure_id}.xyz"
+        
+        # Try original XYZ files first
+        xyz_file = Path(f"data/Au20_OPT_1000/{xyz_filename}")
+        if xyz_file.exists():
+            return self._load_xyz_coordinates(xyz_file)
+        
+        # Try loading from CSV datasets
+        csv_files = [
+            'tree_models_results/top_20_stable_structures.csv',
+            'task2/dataset_elite.csv',
+            'au_cluster_analysis_results/descriptors.csv'
+        ]
+        
+        for csv_file in csv_files:
+            if Path(csv_file).exists():
+                try:
+                    df = pd.read_csv(csv_file)
+                    # Try both original structure_id and xyz_filename
+                    if structure_id in df['structure_id'].values or xyz_filename in df['structure_id'].values:
+                        # Try the XYZ file
+                        if xyz_file.exists():
+                            return self._load_xyz_coordinates(xyz_file)
+                except:
+                    continue
+        
+        raise FileNotFoundError(f"Could not find coordinates for structure {structure_id} (tried {xyz_filename})")
+
+    def _load_xyz_coordinates(self, filepath: Path) -> np.ndarray:
+        """Load coordinates from XYZ file"""
+        with open(filepath, 'r') as f:
+            lines = f.readlines()
+        
+        n_atoms = int(lines[0].strip())
+        coordinates = []
+        
+        for i in range(2, 2 + n_atoms):
+            parts = lines[i].strip().split()
+            x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+            coordinates.append([x, y, z])
+        
+        return np.array(coordinates)
+
+    def _create_visualization_summary(self, representatives: Dict, 
+                                    visualization_files: Dict[str, str],
+                                    output_dir: Path, n_atoms: int, strength: int):
+        """Create a summary document for the representative visualizations"""
+        
+        summary_file = output_dir / 'representative_structures_summary.txt'
+        
+        with open(summary_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("REPRESENTATIVE STRUCTURE VISUALIZATIONS SUMMARY\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            f.write("VISUALIZATION PARAMETERS\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Atoms Perturbed: {n_atoms}\n")
+            f.write(f"Perturbation Strength: {strength}/10\n")
+            f.write(f"Random Seed: 42 (reproducible)\n\n")
+            
+            f.write("REPRESENTATIVE STRUCTURES\n")
+            f.write("-" * 40 + "\n")
+            
+            for category, structure_info in representatives.items():
+                f.write(f"\n{category.upper().replace('_', ' ')}:\n")
+                f.write(f"  Structure ID: {structure_info['id']}\n")
+                f.write(f"  Energy: {structure_info['energy']:.6f} eV\n")
+                f.write(f"  Sensitivity: {structure_info['sensitivity']:.4f} eV/Å\n")
+                f.write(f"  Description: {structure_info['description']}\n")
+                
+                if visualization_files.get(category):
+                    f.write(f"  Visualization: {visualization_files[category]}\n")
+                else:
+                    f.write(f"  Visualization: Failed to generate\n")
+            
+            f.write(f"\nVISUALIZATION FEATURES\n")
+            f.write("-" * 40 + "\n")
+            f.write("• Gold spheres: Unperturbed Au atoms\n")
+            f.write("• Red spheres: Perturbed Au atoms (larger)\n")
+            f.write("• Blue arrows: Displacement vectors\n")
+            f.write("• Side-by-side: Before and after comparison\n")
+            f.write("• Equal axes: Consistent scale for comparison\n\n")
+            
+            f.write("USAGE IN DOCUMENT\n")
+            f.write("-" * 40 + "\n")
+            f.write("These visualizations can be used to demonstrate:\n")
+            f.write("• How different structure types respond to perturbations\n")
+            f.write("• The relationship between stability and robustness\n")
+            f.write("• Visual evidence of model sensitivity differences\n")
+            f.write("• Clear before/after structural changes\n")
+        
+        print(f"📄 Summary saved to: {summary_file}")
 
 
 def find_available_models() -> Dict[str, str]:
@@ -1728,6 +2027,34 @@ def run_all_structures_analysis(task_type: str, results_file: str, n_atoms: int,
             # Create summary report
             create_all_structures_report(summary_df, combined_output_dir, task_type, n_atoms, strength, trials)
             
+            # Create representative structure visualizations
+            try:
+                print(f"\n🎨 CREATING REPRESENTATIVE STRUCTURE VISUALIZATIONS")
+                print("=" * 60)
+                
+                # Create a temporary analyzer for representative visualizations
+                repr_analyzer = PerturbationAnalyzer(str(combined_output_dir))
+                
+                # Select representative structures from the summary data
+                representatives = repr_analyzer.select_representative_structures(summary_df)
+                
+                # Create visualizations for representatives
+                visualization_files = repr_analyzer.create_representative_visualizations(
+                    representatives, n_atoms=n_atoms, strength=strength
+                )
+                
+                print(f"✅ Representative visualizations created:")
+                for category, filename in visualization_files.items():
+                    if filename:
+                        print(f"   {category}: {filename}")
+                    else:
+                        print(f"   {category}: Failed")
+                        
+            except Exception as e:
+                print(f"⚠️ Failed to create representative visualizations: {e}")
+                import traceback
+                traceback.print_exc()
+            
             print(f"\n✅ ALL STRUCTURES ANALYSIS COMPLETED!")
             print(f"📊 Successfully analyzed {len(summary_data)} structures")
             print(f"📂 Results saved to: {combined_output_dir}")
@@ -1891,6 +2218,34 @@ def run_comprehensive_all_structures_analysis(task_type: str, results_file: str,
             
             # Create comprehensive summary visualizations and reports
             create_comprehensive_summary_analysis(summary_df, combined_output_dir, task_type, n_atoms_list, strength_list, trials)
+            
+            # Create representative structure visualizations
+            try:
+                print(f"\n🎨 CREATING REPRESENTATIVE STRUCTURE VISUALIZATIONS")
+                print("=" * 60)
+                
+                # Create a temporary analyzer for representative visualizations
+                repr_analyzer = PerturbationAnalyzer(str(combined_output_dir))
+                
+                # Select representative structures from the summary data
+                representatives = repr_analyzer.select_representative_structures(summary_df)
+                
+                # Create visualizations for representatives using medium parameters (n_atoms=2, strength=5)
+                visualization_files = repr_analyzer.create_representative_visualizations(
+                    representatives, n_atoms=2, strength=5
+                )
+                
+                print(f"✅ Representative visualizations created:")
+                for category, filename in visualization_files.items():
+                    if filename:
+                        print(f"   {category}: {filename}")
+                    else:
+                        print(f"   {category}: Failed")
+                        
+            except Exception as e:
+                print(f"⚠️ Failed to create representative visualizations: {e}")
+                import traceback
+                traceback.print_exc()
             
             print(f"\n✅ COMPREHENSIVE ALL STRUCTURES ANALYSIS COMPLETED!")
             print(f"📊 Successfully completed {completed_analyses} analyses")
@@ -2376,6 +2731,36 @@ def run_interactive_mode():
         
         # Create comprehensive report
         create_comprehensive_report(analyzer, n_atoms, strength, agreement_metrics)
+        
+        # Create structure visualization for this single analysis
+        try:
+            print(f"\n🎨 CREATING STRUCTURE VISUALIZATION")
+            print("=" * 50)
+            
+            viz_output_dir = analyzer.output_dir / 'structure_visualization'
+            viz_output_dir.mkdir(exist_ok=True)
+            
+            # Generate one perturbation for visualization (reproducible)
+            perturbed_structure, perturbation_info = analyzer.structure_perturbator.perturb_structure(
+                n_atoms_to_perturb=n_atoms,
+                perturbation_strength=strength,
+                seed=42  # Reproducible for documentation
+            )
+            
+            # Create 3D visualization
+            filename = analyzer.create_structure_visualization(
+                structure_before=analyzer.structure_perturbator.base_structure,
+                structure_after=perturbed_structure,
+                perturbation_info=perturbation_info,
+                structure_id=analyzer.structure_perturbator.structure_id,
+                output_dir=viz_output_dir
+            )
+            
+            print(f"✅ Structure visualization saved: {filename}")
+            print(f"📁 Location: {viz_output_dir}")
+            
+        except Exception as e:
+            print(f"⚠️ Failed to create structure visualization: {e}")
         
         print(f"\n✅ ANALYSIS COMPLETED!")
         print(f"📂 Results saved to: {analyzer.output_dir}")

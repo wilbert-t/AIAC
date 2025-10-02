@@ -1,0 +1,54 @@
+================================================================================
+COMPREHENSIVE PERTURBATION ANALYSIS REPORT
+================================================================================
+Generated: 2025-10-03 05:14:13
+
+ANALYSIS CONFIGURATION
+----------------------------------------
+Source: XGBOOST
+Structures Analyzed: 11
+Atom Counts: [1, 2, 3]
+Perturbation Strengths: [2, 5, 9]
+Trials per Combination: 15
+Total Analyses: 135
+
+OVERALL STATISTICS
+----------------------------------------
+Energy Range: -1555.587548 to -1555.377597 eV
+Overall Mean Sensitivity: 0.272 ± 0.227 eV/Å
+Overall Mean Prediction Error: 2.104684 eV
+
+PARAMETER ANALYSIS
+----------------------------------------
+By Atom Count:
+  1 atoms: 0.178 ± 0.126 eV/Å (45 analyses)
+  2 atoms: 0.270 ± 0.208 eV/Å (45 analyses)
+  3 atoms: 0.367 ± 0.282 eV/Å (45 analyses)
+
+By Perturbation Strength:
+  Strength 2 (Weak): 0.198 ± 0.172 eV/Å (45 analyses)
+  Strength 5 (Medium): 0.216 ± 0.118 eV/Å (45 analyses)
+  Strength 9 (Strong): 0.401 ± 0.296 eV/Å (45 analyses)
+
+TOP 5 MOST STABLE STRUCTURES (Lowest Mean Sensitivity)
+----------------------------------------
+1. structure_931 - Mean Sensitivity: 0.140 eV/Å
+2. structure_275 - Mean Sensitivity: 0.142 eV/Å
+3. structure_722 - Mean Sensitivity: 0.160 eV/Å
+4. structure_729 - Mean Sensitivity: 0.165 eV/Å
+5. structure_706 - Mean Sensitivity: 0.259 eV/Å
+
+COMPREHENSIVE ANALYSIS INSIGHTS
+----------------------------------------
+• Weak perturbations (strength 2): Probe thermal stability
+• Medium perturbations (strength 5): Test structural robustness
+• Strong perturbations (strength 9): Evaluate major deformation response
+• Multiple atom perturbations reveal collective effects
+• Sensitivity patterns help identify most stable configurations
+
+FILES GENERATED
+----------------------------------------
+• Individual combination results in structure subfolders
+• comprehensive_all_structures_summary.csv - Complete dataset
+• comprehensive_analysis_xgboost_all_combinations.png - Visual analysis
+• This report: comprehensive_analysis_report_xgboost.txt

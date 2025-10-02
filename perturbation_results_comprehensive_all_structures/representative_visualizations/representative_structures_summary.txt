@@ -1,0 +1,50 @@
+================================================================================
+REPRESENTATIVE STRUCTURE VISUALIZATIONS SUMMARY
+================================================================================
+Generated: 2025-10-03 05:17:20
+
+VISUALIZATION PARAMETERS
+----------------------------------------
+Atoms Perturbed: 2
+Perturbation Strength: 5/10
+Random Seed: 42 (reproducible)
+
+REPRESENTATIVE STRUCTURES
+----------------------------------------
+
+MOST STABLE:
+  Structure ID: 350.xyz
+  Energy: -1557.209460 eV
+  Sensitivity: 0.0822 eV/Å
+  Description: Lowest energy structure (thermodynamically most stable)
+  Visualization: structure_perturbation_350.png
+
+MOST ROBUST:
+  Structure ID: 804.xyz
+  Energy: -1556.299794 eV
+  Sensitivity: 0.0649 eV/Å
+  Description: Lowest sensitivity to perturbations (most robust)
+  Visualization: structure_perturbation_804.png
+
+MOST SENSITIVE:
+  Structure ID: 959.xyz
+  Energy: -1555.942366 eV
+  Sensitivity: 1.0991 eV/Å
+  Description: Highest sensitivity to perturbations (least robust)
+  Visualization: structure_perturbation_959.png
+
+VISUALIZATION FEATURES
+----------------------------------------
+• Gold spheres: Unperturbed Au atoms
+• Red spheres: Perturbed Au atoms (larger)
+• Blue arrows: Displacement vectors
+• Side-by-side: Before and after comparison
+• Equal axes: Consistent scale for comparison
+
+USAGE IN DOCUMENT
+----------------------------------------
+These visualizations can be used to demonstrate:
+• How different structure types respond to perturbations
+• The relationship between stability and robustness
+• Visual evidence of model sensitivity differences
+• Clear before/after structural changes
